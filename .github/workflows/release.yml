@@ -48,7 +48,7 @@ jobs:
           ref: refs/tags/${{ inputs.tag }}
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Pin and verify the release commit
@@ -78,7 +78,7 @@ jobs:
           ref: ${{ env.RELEASE_SHA }}
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Verify exact tag, version and architecture
