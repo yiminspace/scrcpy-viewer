@@ -1,0 +1,111 @@
+name: Package release
+run-name: Package ${{ inputs.tag }}${{ inputs.dry_run && ' (validation only)' || '' }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing exact stable tag, for example v0.4.0
+        required: true
+        type: string
+      dry_run:
+        description: Validate and upload workflow artifacts only; do not change a GitHub Release
+        type: boolean
+        default: true
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+      dry_run:
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      commit_sha: ${{ steps.verify.outputs.commit_sha }}
+    steps:
+      - name: Validate tag syntax before checkout
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "Expected an exact stable SemVer tag, such as v0.4.0." >&2
+            exit 1
+          fi
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Pin and verify the release commit
+        id: verify
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: python scripts/release.py verify --tag "$RELEASE_TAG" --require-main --github-output "$GITHUB_OUTPUT"
+
+  validate:
+    needs: resolve
+    uses: ./.github/workflows/ci.yml
+    with:
+      checkout_ref: ${{ needs.resolve.outputs.commit_sha }}
+
+  package:
+    needs: [resolve, validate]
+    runs-on: macos-15
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+      RELEASE_SHA: ${{ needs.resolve.outputs.commit_sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Verify exact tag, version and architecture
+        run: |
+          test "$(uname -m)" = arm64
+          python scripts/release.py verify --tag "$RELEASE_TAG" --commit "$RELEASE_SHA" --require-main
+      - run: ./scripts/package-release.sh
+      - name: Verify a fresh dependency install and extracted app startup
+        run: |
+          ./scripts/setup-dependencies.sh --directory "$RUNNER_TEMP/viewer-deps"
+          python scripts/smoke-release.py \
+            --archive "dist/Scrcpy-Viewer-$(cat VERSION)-macOS-arm64.zip" \
+            --server "$RUNNER_TEMP/viewer-deps/scrcpy/3.3.3/scrcpy-server"
+      - name: Prepare installation and version notes
+        run: python scripts/release.py notes --tag "$RELEASE_TAG" --output dist/RELEASE_NOTES.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Scrcpy-Viewer-${{ inputs.tag }}-macOS-arm64-attempt-${{ github.run_attempt }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            dist/Scrcpy-Viewer-*-macOS-arm64.zip
+            dist/SHA256SUMS
+            dist/RELEASE_NOTES.md
+      - name: Publish complete draft or verify an unchanged published release
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: python scripts/publish_release.py --tag "$RELEASE_TAG" --commit "$RELEASE_SHA" --dist dist

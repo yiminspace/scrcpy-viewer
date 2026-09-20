@@ -1,0 +1,34 @@
+name: Bug report
+description: Report a reproducible problem with discovery, viewing or main-screen control.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For security vulnerabilities, follow SECURITY.md. Remove device serials,
+        account data and private screen content from anything you attach.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Include the expected behavior and what actually happened.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Include whether this is the main display, a secondary display or history.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: App version or commit, macOS version, Android version, adb version and scrcpy-server version. Do not include the device serial.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Redacted evidence
+      description: Optional error text or a minimal synthetic example. Explain what you have already checked.

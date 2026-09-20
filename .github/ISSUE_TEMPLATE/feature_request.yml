@@ -1,0 +1,22 @@
+name: Feature request
+description: Describe a workflow this viewer could support better.
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: What are you trying to do?
+      description: Describe the workflow and where the current application gets in the way.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Include alternatives or workarounds you have considered.
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Optional mockups or examples with personal and device-specific information removed.

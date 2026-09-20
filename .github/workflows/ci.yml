@@ -1,0 +1,62 @@
+name: Build and test
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      checkout_ref:
+        description: Exact commit to validate
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  pr-title:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Require a Conventional Commit title for squash merge
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          python3 - <<'PY'
+          import os, re
+          title = os.environ['PR_TITLE']
+          if not re.fullmatch(r'(feat|fix|perf|docs|style|refactor|test|build|ci|chore|revert)(\([^()\r\n]+\))?!?: [^\s].*', title):
+              raise SystemExit('Use a Conventional Commit PR title, for example: feat: add a display option')
+          PY
+
+  release-tooling:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.checkout_ref || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r scripts/release-requirements.txt
+      - run: python scripts/test_release.py
+
+  macos:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.checkout_ref || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify Apple Silicon runner
+        run: test "$(uname -m)" = arm64
+      - run: swift --version
+      - run: swift test
+      - run: ./scripts/build-app.sh

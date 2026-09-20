@@ -1,0 +1,3 @@
+# Also pinned in .github/workflows/semantic-release.yml.
+# 10.6+ supports a plain VERSION file as the single version source.
+python-semantic-release==10.6.2
