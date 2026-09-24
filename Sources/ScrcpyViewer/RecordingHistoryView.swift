@@ -8,6 +8,7 @@ struct RecordingHistoryView: View {
     let select: (SavedRecording) -> Void
     let trash: (SavedRecording) -> Void
     @State private var expanded = true
+    @State private var recordingToTrash: SavedRecording?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -43,11 +44,23 @@ struct RecordingHistoryView: View {
                         ForEach(recordings) { recording in
                             SavedRecordingRow(recording: recording,
                                               select: { select(recording) },
-                                              trash: { trash(recording) })
+                                              trash: { recordingToTrash = recording })
                         }
                     }
                 }
             }
+        }
+        .alert("将这段录屏移到废纸篓？", isPresented: Binding(
+            get: { recordingToTrash != nil },
+            set: { if !$0 { recordingToTrash = nil } }
+        ), presenting: recordingToTrash) { recording in
+            Button("取消", role: .cancel) {}
+                .keyboardShortcut(.defaultAction)
+            Button("移到废纸篓", role: .destructive) {
+                trash(recording)
+            }
+        } message: { recording in
+            Text("录制时间：\(recording.recordedAt.formatted(date: .abbreviated, time: .standard))\n\(recording.url.lastPathComponent)\n\n移除后可在访达的废纸篓中恢复。")
         }
     }
 }
@@ -118,8 +131,8 @@ private struct SavedRecordingRow: View {
             .opacity(isHovered || trashIsFocused ? 1 : 0)
             .allowsHitTesting(isHovered || trashIsFocused)
             .onHover { trashIsHovered = $0 }
-            .help("移到废纸篓")
-            .accessibilityLabel("移到废纸篓")
+            .help("将录屏移到废纸篓…")
+            .accessibilityLabel("将录屏移到废纸篓…")
             .accessibilityValue(recording.recordedAt.formatted(date: .abbreviated, time: .standard))
         }
         .padding(.horizontal, 8).padding(.vertical, 7)

@@ -12,7 +12,7 @@
 
 ## Unreleased
 
-- Add a per-recording trash button that moves saved videos to the system Trash and removes their history entries.
+- Add a hover-revealed per-recording trash button with a confirmation dialog, defaulting to Cancel, before moving saved videos to the system Trash and removing their history entries.
 
 - Display the main screen and all active secondary screens edge to edge on one black canvas.
 - Replace blue focus outlines with a compact, neutral keyboard status.
