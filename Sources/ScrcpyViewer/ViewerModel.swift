@@ -3,12 +3,6 @@ import Combine
 import UniformTypeIdentifiers
 import ViewerCore
 
-enum ViewerLayout: String, CaseIterable, Identifiable {
-    case single = "单屏"
-    case sideBySide = "并排"
-    var id: String { rawValue }
-}
-
 enum DisplayPresence: String {
     case active, sleeping, removed, disconnected
 }
@@ -54,7 +48,6 @@ final class ViewerModel: ObservableObject {
     @Published private(set) var selectedSerial: String?
     @Published private(set) var screens: [DisplayPresentation] = []
     @Published var selectedScreenID: String?
-    @Published var layout: ViewerLayout = .sideBySide
     @Published var followNewScreen = true
     @Published private(set) var discoveryError: String?
     @Published private(set) var dependencyError: String?
@@ -63,6 +56,42 @@ final class ViewerModel: ObservableObject {
     @Published private(set) var focusedScreenID: String?
     @Published private(set) var interactionError: String?
     @Published private(set) var isWakingMain = false
+    @Published private(set) var isRecording = false
+    @Published private(set) var isFinishingRecording = false
+    @Published private(set) var recordingElapsed: TimeInterval = 0
+    @Published private(set) var lastRecordingURL: URL?
+    @Published private(set) var recordingHistory: [SavedRecording] = []
+    @Published var recordingError: String?
+    @Published var autoRecordSecondary = UserDefaults.standard.bool(forKey: "autoRecordSecondary") {
+        didSet {
+            UserDefaults.standard.set(autoRecordSecondary, forKey: "autoRecordSecondary")
+            autoRecordingPolicy.reset()
+            reconcileAutoRecording()
+        }
+    }
+    @Published private(set) var recordingDirectory: URL = {
+        if let path = UserDefaults.standard.string(forKey: "recordingDirectory") {
+            return URL(fileURLWithPath: path, isDirectory: true)
+        }
+        return FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Scrcpy Viewer", isDirectory: true)
+    }()
+
+    private var recorder: CanvasRecorder?
+    private var retiringRecordingParts: [UUID: CanvasRecorder] = [:]
+    private var recordingTimer: Timer?
+    private var recordingStartedAt: TimeInterval?
+    private var recordingGeneration = UUID()
+    private var recordingRoster = RecordingRoster()
+    private var recordingPanelIsOpen = false
+    private var recordingIsAutomatic = false
+    private var autoRecordingPolicy = SecondaryAutoRecordingPolicy()
+    private var recordingBaseURL: URL?
+    private var recordingPart = 1
+    private var recordingPartStartedAt: TimeInterval = 0
+    private var recordingLayoutKey = ""
+    private var savedRecordingParts: [Int: URL] = [:]
+    private var recordingHistoryGeneration = UUID()
 
     private var monitor: DisplayMonitor?
     private var streams: [String: ScrcpyStream] = [:]
@@ -95,9 +124,16 @@ final class ViewerModel: ObservableObject {
 
     var isConnected: Bool { selectedDevice?.isConnected == true }
 
+    var canStartRecording: Bool {
+        !isShuttingDown && !isRecording && !isFinishingRecording && !recordingPanelIsOpen
+            && currentScreens.contains { $0.frame != nil }
+    }
+    var canSaveScreenshot: Bool { visibleScreens.contains { $0.frame != nil } }
+
     func start() {
         guard !started else { return }
         started = true
+        refreshRecordingHistory()
         configureMonitor()
         diagnostics.start(model: self)
     }
@@ -107,6 +143,7 @@ final class ViewerModel: ObservableObject {
         guard !isShuttingDown else { completeShutdownIfReady(); return }
         isShuttingDown = true
         diagnostics.recordLifecycle("shutdown_started")
+        stopRecording(suppressAutomaticRestart: false)
         monitorGeneration = UUID()
         monitor?.stop()
         monitor = nil
@@ -156,6 +193,7 @@ final class ViewerModel: ObservableObject {
     }
 
     func clearHistory() {
+        captureRecordingFrame()
         let cleared = scenePolicy.clearHistory(screens.map(\.sceneItem))
         for id in cleared { stopStream(id) }
         screens.removeAll { cleared.contains($0.id) }
@@ -259,18 +297,247 @@ final class ViewerModel: ObservableObject {
     }
 
     func saveScreenshot() {
-        guard let screen = selectedScreen, let frame = screen.frame else { return }
+        guard canSaveScreenshot else { return }
+        let snapshot = recordingSnapshots(visibleScreens)
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.png]
-        panel.nameFieldStringValue = "display-\(screen.display.displayID)-\(Int((screen.lastFrameAt ?? Date()).timeIntervalSince1970)).png"
-        panel.title = "保存当前画面"
-        panel.message = screen.isRetained ? "保存的是此屏最后收到的画面。" : "将当前收到的画面保存为 PNG。"
+        panel.nameFieldStringValue = "screens-\(Int(Date().timeIntervalSince1970)).png"
+        panel.title = "保存全部屏幕截图"
+        panel.message = "主屏和所有副屏紧贴排列，保存为一张 PNG。历史画面会标注时间。"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
-            try ViewerDiagnostics.writePNG(frame, to: url)
-        } catch {
-            saveError = error.localizedDescription
+            let image = try CanvasComposition.image(screens: snapshot, maximumHeight: 2160, maximumWidth: 8192)
+            try ViewerDiagnostics.writePNG(image, to: url)
+        } catch { saveError = error.localizedDescription }
+    }
+
+    func startRecording() {
+        guard canStartRecording else { return }
+        clearInputFocus()
+        let serial = selectedSerial
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.mpeg4Movie]
+        panel.nameFieldStringValue = recordingFilename()
+        panel.title = "录制全部屏幕"
+        panel.message = "紧贴画面录制，无黑边。高度最高 720 像素，12 帧/秒，无音频；屏幕数量或方向变化时自动另存下一段。"
+        recordingPanelIsOpen = true
+        let response = panel.runModal()
+        recordingPanelIsOpen = false
+        guard response == .OK, let url = panel.url, canStartRecording, serial == selectedSerial else {
+            // Cancelling a manual save dialog must not immediately start an automatic recording.
+            autoRecordingPolicy.suppressUntilNoSecondary()
+            return
         }
+        beginRecording(to: url, automatic: false)
+    }
+
+    private func beginRecording(to url: URL, automatic: Bool) {
+        guard canStartRecording else { return }
+        recordingError = nil
+        lastRecordingURL = nil
+        savedRecordingParts = [:]
+        recordingElapsed = 0
+        recordingPartStartedAt = 0
+        recordingPart = 1
+        recordingBaseURL = url
+        recordingIsAutomatic = automatic
+        recordingRoster = RecordingRoster()
+        recordingGeneration = UUID()
+        let initial = recordingRoster.update(currentIDs: currentScreens.map(\.id), screens: recordingSnapshots(screens))
+        do {
+            recorder = try makeRecorder(to: url, screens: initial)
+            recordingLayoutKey = layoutKey(initial)
+            recordingStartedAt = ProcessInfo.processInfo.systemUptime
+            isRecording = true
+            captureRecordingFrame()
+            let timer = Timer(timeInterval: 1.0 / 12.0, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated { self?.captureRecordingFrame() }
+            }
+            recordingTimer = timer
+            RunLoop.main.add(timer, forMode: .common)
+        } catch { recordingFailed(error) }
+    }
+
+    private func makeRecorder(to url: URL, screens: [RecordingScreen]) throws -> CanvasRecorder {
+        let generation = recordingGeneration
+        return try CanvasRecorder(outputURL: url, configuration: .compact(for: screens), onFailure: { [weak self] error in
+            DispatchQueue.main.async {
+                guard let self, self.recordingGeneration == generation else { return }
+                self.recordingFailed(error)
+            }
+        })
+    }
+
+    func stopRecording() { stopRecording(suppressAutomaticRestart: true) }
+
+    private func stopRecording(suppressAutomaticRestart: Bool, captureLastFrame: Bool = true) {
+        if suppressAutomaticRestart { autoRecordingPolicy.suppressUntilNoSecondary() }
+        guard isRecording else { return }
+        if captureLastFrame { captureRecordingFrame() }
+        guard isRecording else { return }
+        recordingTimer?.invalidate()
+        recordingTimer = nil
+        recordingStartedAt = nil
+        isRecording = false
+        isFinishingRecording = true
+        if let recorder {
+            self.recorder = nil
+            finishPart(recorder, number: recordingPart, duration: recordingElapsed - recordingPartStartedAt)
+        }
+        completeRecordingIfReady()
+    }
+
+    private func finishPart(_ recorder: CanvasRecorder, number: Int, duration: TimeInterval) {
+        let id = UUID(), generation = recordingGeneration
+        retiringRecordingParts[id] = recorder
+        recorder.finish(at: max(0, duration)) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self, self.recordingGeneration == generation else { return }
+                self.retiringRecordingParts.removeValue(forKey: id)
+                switch result {
+                case .success(let url):
+                    self.savedRecordingParts[number] = url
+                    self.rememberRecording(url)
+                case .failure(let error): self.recordingFailed(error)
+                }
+                self.completeRecordingIfReady()
+            }
+        }
+    }
+
+    private func completeRecordingIfReady() {
+        guard isFinishingRecording, !isRecording, retiringRecordingParts.isEmpty else { return }
+        recordingRoster = RecordingRoster()
+        isFinishingRecording = false
+        lastRecordingURL = savedRecordingParts.keys.sorted().first.flatMap { savedRecordingParts[$0] }
+        completeShutdownIfReady()
+        reconcileAutoRecording()
+    }
+
+    private func recordingFailed(_ error: Error) {
+        recordingError = error.localizedDescription
+        autoRecordingPolicy.suppressUntilNoSecondary()
+        stopRecording(suppressAutomaticRestart: true, captureLastFrame: false)
+    }
+
+    func revealRecording() {
+        let urls = savedRecordingParts.keys.sorted().compactMap { savedRecordingParts[$0] }
+        guard !urls.isEmpty else { return }
+        NSWorkspace.shared.activateFileViewerSelecting(urls)
+    }
+
+    func chooseRecordingDirectory() {
+        let panel = NSOpenPanel()
+        panel.title = "选择自动录屏目录"
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = recordingDirectory
+        recordingPanelIsOpen = true
+        let response = panel.runModal()
+        recordingPanelIsOpen = false
+        if response == .OK, let url = panel.url {
+            recordingDirectory = url
+            UserDefaults.standard.set(url.path, forKey: "recordingDirectory")
+            refreshRecordingHistory()
+        }
+        reconcileAutoRecording()
+    }
+
+    func revealRecordingDirectory() {
+        do {
+            try FileManager.default.createDirectory(at: recordingDirectory, withIntermediateDirectories: true)
+            NSWorkspace.shared.open(recordingDirectory)
+        } catch { recordingError = error.localizedDescription }
+    }
+
+    func refreshRecordingHistory() {
+        let generation = UUID()
+        recordingHistoryGeneration = generation
+        let known = (UserDefaults.standard.stringArray(forKey: "recordingHistoryPaths") ?? [])
+            .map { URL(fileURLWithPath: $0) }
+        let directory = recordingDirectory
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let entries = RecordingHistoryCatalog.list(recordedURLs: known, directory: directory)
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.recordingHistoryGeneration == generation else { return }
+                self.recordingHistory = entries
+            }
+        }
+    }
+
+    private func rememberRecording(_ url: URL) {
+        let path = url.standardizedFileURL.path
+        var paths = UserDefaults.standard.stringArray(forKey: "recordingHistoryPaths") ?? []
+        if !paths.contains(path) {
+            paths.append(path)
+            UserDefaults.standard.set(paths, forKey: "recordingHistoryPaths")
+        }
+        refreshRecordingHistory()
+    }
+
+    private func recordingFilename() -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        return "screens-\(formatter.string(from: Date()))-\(UUID().uuidString.prefix(6)).mp4"
+    }
+
+    private func reconcileAutoRecording() {
+        guard !isShuttingDown, !recordingPanelIsOpen else { return }
+        let action = autoRecordingPolicy.action(enabled: autoRecordSecondary && isConnected,
+            hasSecondary: screens.contains { !$0.display.isMain && $0.presence == .active },
+            hasFrame: currentScreens.contains { $0.frame != nil }, recordingIsAutomatic: recordingIsAutomatic,
+            isRecording: isRecording, isFinishing: isFinishingRecording)
+        switch action {
+        case .none: break
+        case .stop: stopRecording(suppressAutomaticRestart: false)
+        case .start:
+            do {
+                try FileManager.default.createDirectory(at: recordingDirectory, withIntermediateDirectories: true)
+                beginRecording(to: recordingDirectory.appendingPathComponent(recordingFilename()), automatic: true)
+            } catch { recordingFailed(error) }
+        }
+    }
+
+    private func recordingSnapshots(_ presentations: [DisplayPresentation]) -> [RecordingScreen] {
+        presentations.map { screen in
+            RecordingScreen(id: screen.id, title: screen.display.title, image: screen.frame,
+                sourceSize: CGSize(width: max(1, screen.display.width), height: max(1, screen.display.height)),
+                status: screen.status, lastFrameAt: screen.lastFrameAt, isLive: screen.isLive)
+        }
+    }
+
+    private func layoutKey(_ screens: [RecordingScreen]) -> String {
+        let size = CanvasComposition.size(for: screens)
+        return "\(Int(size.width))x\(Int(size.height)):" + screens.map { screen in
+            let width = CGFloat(screen.image?.width ?? Int(screen.sourceSize.width))
+            let height = CGFloat(screen.image?.height ?? Int(screen.sourceSize.height))
+            return "\(screen.id):\(Int((width / max(1, height) * 10_000).rounded()))"
+        }.joined(separator: ",")
+    }
+
+    private func captureRecordingFrame() {
+        guard isRecording, let currentRecorder = recorder, let recordingStartedAt else { return }
+        recordingElapsed = max(0, ProcessInfo.processInfo.systemUptime - recordingStartedAt)
+        let included = recordingRoster.update(currentIDs: currentScreens.map(\.id), screens: recordingSnapshots(screens))
+        let nextKey = layoutKey(included)
+        if nextKey != recordingLayoutKey, let baseURL = recordingBaseURL {
+            let nextPart = recordingPart + 1
+            let filename = baseURL.deletingPathExtension().lastPathComponent
+                + String(format: "-part%03d-", nextPart) + UUID().uuidString.prefix(6) + ".mp4"
+            do {
+                let next = try makeRecorder(to: baseURL.deletingLastPathComponent().appendingPathComponent(filename), screens: included)
+                // Hold the previous layout through the boundary, then start the new
+                // exact-aspect segment without waiting for disk finalization.
+                finishPart(currentRecorder, number: recordingPart, duration: recordingElapsed - recordingPartStartedAt)
+                recorder = next
+                recordingPart = nextPart
+                recordingPartStartedAt = recordingElapsed
+                recordingLayoutKey = nextKey
+            } catch { recordingFailed(error); return }
+        }
+        recorder?.append(screens: included, at: recordingElapsed - recordingPartStartedAt)
     }
 
     private func configureMonitor() {
@@ -296,6 +563,8 @@ final class ViewerModel: ObservableObject {
     }
 
     private func switchDevice(_ serial: String?) {
+        stopRecording(suppressAutomaticRestart: false)
+        autoRecordingPolicy.reset()
         clearInputFocus()
         stopAllStreams()
         screens.removeAll()
@@ -307,6 +576,7 @@ final class ViewerModel: ObservableObject {
     }
 
     private func apply(_ snapshot: DiscoverySnapshot) {
+        defer { reconcileAutoRecording() }
         devices = snapshot.devices
         // A snapshot produced before the picker change must not revive old-device streams.
         if let requested = explicitlySelectedSerial, snapshot.selectedSerial != requested { return }
@@ -362,6 +632,10 @@ final class ViewerModel: ObservableObject {
             if lhs.display.isMain != rhs.display.isMain { return lhs.display.isMain }
             return lhs.display.displayID < rhs.display.displayID
         }
+        // Let an active recording retain the dated last frame before dropping
+        // removed secondary displays from the viewer's cache.
+        captureRecordingFrame()
+        screens.removeAll { !$0.display.isMain && $0.presence == .removed }
         reconcileSelection(newlyActive: newlyActive)
         diagnostics.write(model: self, force: true)
     }
@@ -390,6 +664,7 @@ final class ViewerModel: ObservableObject {
                     self.screens[index].receivedCurrentFrame = true
                     self.screens[index].state = .streaming
                     self.screens[index].controlReady = display.isMain && self.streams[id]?.isControlReady == true
+                    self.reconcileAutoRecording()
                     self.diagnostics.write(model: self)
                 }
             },
@@ -458,7 +733,8 @@ final class ViewerModel: ObservableObject {
     }
 
     private func completeShutdownIfReady() {
-        guard isShuttingDown, streams.isEmpty, retiringStreams.isEmpty else { return }
+        guard isShuttingDown, streams.isEmpty, retiringStreams.isEmpty,
+              !isRecording, !isFinishingRecording else { return }
         let completions = shutdownCompletions
         shutdownCompletions.removeAll()
         guard !completions.isEmpty else { return }

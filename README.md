@@ -11,11 +11,13 @@ Scrcpy Viewer is a native macOS client for the [scrcpy](https://github.com/Genym
 ## What it does
 
 - Automatically discovers system-enumerated, capturable Android displays over adb.
-- Shows the main screen and multiple active secondary screens in one window, with focused and side-by-side layouts.
+- Shows the main screen and every active secondary screen edge to edge on one black canvas, with horizontal scrolling when needed.
 - Supports mouse clicks, drags, scrolling, keyboard input, committed IME text, and `⌘A/C/X/V` on the main screen. Secondary displays are view-only.
 - Keeps main-screen input focus when a new secondary screen appears.
-- Moves sleeping or removed secondary screens into a collapsed history, with clearly dated last frames. Clearing history frees local frames without changing the phone.
-- Saves individual screenshots on request and reconnects to the selected device.
+- Removes sleeping or ended secondary screens from the live canvas and shows saved recordings in the sidebar with timestamps and thumbnails. Click a recording to open it in the system default video player.
+- Saves the main screen and all active secondary screens together in one PNG, and reconnects to the selected device.
+- Records the main screen and all active secondary screens together in a compact, silent MP4, including screens discovered during recording.
+- Offers an optional automatic recording mode that follows secondary-display activity on the selected device.
 
 Original scrcpy already captures a chosen secondary display. This client adds discovery, layout, and lifecycle management. Android determines which displays are available and capturable.
 
@@ -36,9 +38,21 @@ After installation, launch from Finder, Spotlight, or the Dock. From a terminal:
 open "$HOME/Applications/Scrcpy Viewer.app"
 ```
 
+## Screenshots and recording
+
+The camera button saves the main screen and all active secondary screens in a single PNG. Screens outside the visible scroll area are included. Images sit edge to edge, without padding, gaps or title bars; any non-live frame carries its status and date inside that image.
+
+Click the recording button in the toolbar, choose an MP4 destination, then stop when finished. Recording includes the main screen and all active secondary screens, independently of selection and scrolling. New active secondary screens join automatically; screens that sleep or disappear retain a dated last frame for that recording. Click the completion control at the bottom of the window to reveal all saved parts in Finder.
+
+The silent H.264 output follows the combined screen proportions without added black padding. It uses up to 720 pixels in height and 2560 pixels in width at 12 fps, with a bitrate adjusted to the output size, capped at 1.6 Mbps. A new display or rotation can change the required dimensions; the app then saves a consecutive MP4 part, such as `screens-part002-<unique suffix>.mp4`. MP4 keeps video files compact; GIF export is not included. Switching devices or quitting finishes the recording.
+
+Automatic recording is off by default. Enable **副屏开启时自动录制** in the gear menu to start when the selected device has an active secondary display and a frame is available. Recording stops and saves after the last active secondary sleeps, disappears or disconnects. Multiple overlapping secondary displays share one recording session. A manual stop prevents restarting until all secondaries have closed; manually started recordings are not stopped by secondary-display activity. The setting persists across launches. Automatic files go to `~/Movies/Scrcpy Viewer`; the gear menu lets you change or open this folder.
+
+The sidebar's recording history shows saved files with their time and a thumbnail. Click an entry to open it in the system default video player. History loads on launch and after saves from the selected recording folder and files explicitly saved by this app; it does not search other folders. Manually chosen save paths are remembered locally so those recordings remain available after relaunch.
+
 ## What is not included
 
-Audio playback, video recording, file transfer, gamepad support, and creating new displays are **not implemented**. This is a focused multi-display client, not a complete replacement for scrcpy. For those features, use the original scrcpy client.
+Audio playback, file transfer, gamepad support, and creating new displays are **not implemented**. This is a focused multi-display client, not a complete replacement for scrcpy. For those features, use the original scrcpy client.
 
 The Android device's encoder limits determine how many displays can stream simultaneously. Protected content or inaccessible virtual displays may not work. The app does not automatically wake the phone, inject input, or keep another app's background task alive.
 

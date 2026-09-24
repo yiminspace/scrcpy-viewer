@@ -52,9 +52,14 @@ struct ScrcpyViewerApp: App {
         .commands {
             CommandGroup(replacing: .newItem) {}
             CommandGroup(after: .saveItem) {
-                Button("保存当前画面…") { model.saveScreenshot() }
+                Button("保存全部屏幕截图…") { model.saveScreenshot() }
                     .keyboardShortcut("s", modifiers: [.command, .shift])
-                    .disabled(model.selectedScreen?.frame == nil)
+                    .disabled(!model.canSaveScreenshot)
+                Button(model.isRecording ? "停止录制" : "录制全部屏幕") {
+                    if model.isRecording { model.stopRecording() } else { model.startRecording() }
+                }
+                .keyboardShortcut("r", modifiers: [.command, .shift])
+                .disabled(model.isFinishingRecording || (!model.isRecording && !model.canStartRecording))
             }
         }
     }
@@ -62,7 +67,7 @@ struct ScrcpyViewerApp: App {
 
 private struct ViewerWindow: View {
     @ObservedObject var model: ViewerModel
-    @State private var historyExpanded = false
+    @State private var recordingPlaybackError: String?
 
     var body: some View {
         HStack(spacing: 0) {
@@ -86,25 +91,29 @@ private struct ViewerWindow: View {
                     .help("重新发现设备和屏幕，并重试连接失败的画面")
             }
             ToolbarItemGroup(placement: .primaryAction) {
-                Picker("布局", selection: $model.layout) {
-                    ForEach(ViewerLayout.allCases) { layout in Text(layout.rawValue).tag(layout) }
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 116)
                 Toggle(isOn: $model.followNewScreen) {
                     Label("跟随新副屏", systemImage: "rectangle.on.rectangle")
                 }
                 .toggleStyle(.checkbox)
                 .help("自动选择新出现或恢复的副屏；主屏正在输入时保持当前焦点")
-                Button(action: model.saveScreenshot) { Image(systemName: "square.and.arrow.down") }
-                    .disabled(model.selectedScreen?.frame == nil)
-                    .help("保存选中屏幕的当前画面")
+                recordingButton
+                recordingSettings
+                Button(action: model.saveScreenshot) {
+                    Label("保存全部屏幕截图", systemImage: "camera").labelStyle(.iconOnly)
+                }
+                .disabled(!model.canSaveScreenshot)
+                .help("将主屏和所有副屏合成一张截图保存。⌘⇧S")
             }
         }
         .alert("图片未保存", isPresented: Binding(get: { model.saveError != nil }, set: { if !$0 { model.saveError = nil } })) {
             Button("好", role: .cancel) { model.saveError = nil }
         } message: { Text(model.saveError ?? "") }
-        .onChange(of: model.selectedSerial) { _, _ in historyExpanded = false }
+        .alert("录屏未保存", isPresented: Binding(get: { model.recordingError != nil }, set: { if !$0 { model.recordingError = nil } })) {
+            Button("好", role: .cancel) { model.recordingError = nil }
+        } message: { Text(model.recordingError ?? "") }
+        .alert("无法打开录屏", isPresented: Binding(get: { recordingPlaybackError != nil }, set: { if !$0 { recordingPlaybackError = nil } })) {
+            Button("好", role: .cancel) { recordingPlaybackError = nil }
+        } message: { Text(recordingPlaybackError ?? "") }
     }
 
     private var devicePicker: some View {
@@ -139,36 +148,14 @@ private struct ViewerWindow: View {
                         screenRow(screen)
                     }
                     if model.currentScreens.isEmpty {
-                        Text(model.isConnected ? (model.historyScreens.isEmpty ? "正在发现屏幕…" : "没有活跃屏幕") : "连接设备后，屏幕会出现在这里。")
+                        Text(model.isConnected ? "正在发现屏幕…" : "连接设备后，屏幕会出现在这里。")
                             .font(.callout).foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading).padding(8)
                     }
-                    if !model.historyScreens.isEmpty {
-                        Divider().padding(.top, 10).padding(.bottom, 5)
-                        DisclosureGroup(isExpanded: $historyExpanded) {
-                            VStack(spacing: 5) {
-                                HStack {
-                                    Text("保留的最后画面").font(.caption2).foregroundStyle(.secondary)
-                                    Spacer(minLength: 0)
-                                    Button("清除历史") {
-                                        model.clearHistory()
-                                        historyExpanded = false
-                                    }
-                                    .font(.caption2)
-                                    .buttonStyle(.borderless)
-                                    .help("清除本机保留的副屏记录和画面缓存")
-                                }
-                                .padding(.horizontal, 4).padding(.top, 9).padding(.bottom, 3)
-                                ForEach(model.historyScreens) { screen in
-                                    screenRow(screen, isHistory: true)
-                                }
-                            }
-                        } label: {
-                            Label("历史（\(model.historyScreens.count)）", systemImage: "clock")
-                                .font(.callout).foregroundStyle(.secondary)
-                        }
-                        .padding(.horizontal, 4)
-                    }
+                    Divider().padding(.top, 10).padding(.bottom, 5)
+                    RecordingHistoryView(recordings: model.recordingHistory,
+                                         refresh: model.refreshRecordingHistory,
+                                         select: playRecording)
                 }
                 .padding(.horizontal, 8)
             }
@@ -182,7 +169,18 @@ private struct ViewerWindow: View {
         .background(Color(nsColor: .windowBackgroundColor))
     }
 
-    private func screenRow(_ screen: DisplayPresentation, isHistory: Bool = false) -> some View {
+    private func playRecording(_ recording: SavedRecording) {
+        guard FileManager.default.fileExists(atPath: recording.url.path) else {
+            recordingPlaybackError = "这段录屏已被移动或删除。录屏列表已刷新。"
+            model.refreshRecordingHistory()
+            return
+        }
+        if !NSWorkspace.shared.open(recording.url) {
+            recordingPlaybackError = "无法使用系统播放器打开这段录屏，请确认已安装支持 MP4 的播放器。"
+        }
+    }
+
+    private func screenRow(_ screen: DisplayPresentation) -> some View {
         let selected = model.selectedScreenID == screen.id
         return Button { model.selectScreen(screen.id) } label: {
             HStack(alignment: .top, spacing: 9) {
@@ -197,22 +195,12 @@ private struct ViewerWindow: View {
                     }.foregroundStyle(.secondary)
                     Text("\(screen.display.width) × \(screen.display.height) · \(screen.display.isMain ? "可操作" : "仅观看")")
                         .font(.system(size: 10, design: .monospaced)).foregroundStyle(.tertiary)
-                    if isHistory {
-                        if let date = screen.lastFrameAt {
-                            Text(date.formatted(date: .numeric, time: .shortened))
-                                .font(.system(size: 10)).foregroundStyle(.tertiary)
-                                .lineLimit(1)
-                                .help("最后画面：\(date.formatted(date: .abbreviated, time: .standard))")
-                        } else {
-                            Text("未收到画面").font(.caption2).foregroundStyle(.tertiary)
-                        }
-                    }
                 }
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 10).padding(.vertical, 11)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(selected ? Color.accentColor.opacity(0.13) : Color.clear, in: RoundedRectangle(cornerRadius: 7))
+            .background(selected ? Color.primary.opacity(0.07) : Color.clear, in: RoundedRectangle(cornerRadius: 7))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -222,36 +210,120 @@ private struct ViewerWindow: View {
     @ViewBuilder private var stage: some View {
         if model.visibleScreens.isEmpty {
             emptyStage
-        } else if model.layout == .single, let screen = model.selectedScreen {
-            DisplayPane(model: model, screen: screen, selected: true, retry: { model.retry(screen.id) })
-                .padding(20)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(stageColor)
         } else {
-            GeometryReader { geometry in
-                ScrollViewReader { proxy in
-                    ScrollView(.horizontal) {
-                        HStack(spacing: 16) {
-                            ForEach(model.visibleScreens) { screen in
-                                DisplayPane(model: model, screen: screen, selected: screen.id == model.selectedScreenID, retry: { model.retry(screen.id) })
-                                    .frame(width: max(280, (geometry.size.width - 40 - CGFloat(max(0, model.visibleScreens.count - 1)) * 16) / CGFloat(max(1, model.visibleScreens.count))))
-                                    .contentShape(Rectangle())
-                                    .onTapGesture { model.selectScreen(screen.id) }
-                                    .id(screen.id)
+            VStack(spacing: 0) {
+                stageControls
+                GeometryReader { geometry in
+                    let screens = model.visibleScreens
+                    let availableHeight = max(1, geometry.size.height - 48)
+                    let aspectSum = screens.reduce(CGFloat.zero) { $0 + displayAspectRatio($1) }
+                    let availableWidth = max(1, geometry.size.width - 40)
+                    // Keep a useful viewing size when many displays are present;
+                    // the shared canvas then scrolls instead of shrinking every screen.
+                    let fittedHeight = availableWidth / max(0.1, aspectSum)
+                    let imageHeight = min(availableHeight, max(min(480, availableHeight), fittedHeight))
+                    ScrollViewReader { proxy in
+                        ScrollView(.horizontal) {
+                            HStack(alignment: .top, spacing: 0) {
+                                ForEach(screens) { screen in
+                                    DisplayPane(model: model, screen: screen, imageHeight: imageHeight,
+                                                retry: { model.retry(screen.id) })
+                                        .frame(width: imageHeight * displayAspectRatio(screen))
+                                        .contentShape(Rectangle())
+                                        .onTapGesture { model.selectScreen(screen.id) }
+                                        .id(screen.id)
+                                }
                             }
+                            .padding(.horizontal, 20)
+                            .padding(.top, 8)
+                            .padding(.bottom, 12)
+                            .frame(minWidth: geometry.size.width, minHeight: geometry.size.height, alignment: .top)
                         }
-                        .padding(20)
-                        .frame(height: geometry.size.height)
-                    }
-                    .onChange(of: model.selectedScreenID) { _, id in
-                        guard let id else { return }
-                        withAnimation(.easeOut(duration: 0.2)) {
-                            proxy.scrollTo(id, anchor: model.selectedScreen?.display.isMain == true ? .leading : .trailing)
+                        .onChange(of: model.selectedScreenID) { _, id in
+                            guard let id else { return }
+                            withAnimation(.easeOut(duration: 0.2)) {
+                                proxy.scrollTo(id, anchor: model.selectedScreen?.display.isMain == true ? .leading : .trailing)
+                            }
                         }
                     }
                 }
-            }.background(stageColor)
+            }
+            .background(stageColor)
         }
+    }
+
+    private var stageControls: some View {
+        HStack(spacing: 15) {
+            if let main = model.visibleScreens.first(where: { $0.display.isMain }) {
+                Text("主屏操作").font(.system(size: 11)).foregroundStyle(.secondary)
+                Button { model.navigateMain(main.id, keyCode: 4) } label: { Image(systemName: "chevron.left") }
+                    .help("返回").disabled(!model.canControl(main.id))
+                Button { model.navigateMain(main.id, keyCode: 3) } label: { Image(systemName: "house") }
+                    .help("Home").disabled(!model.canControl(main.id))
+                Button { model.navigateMain(main.id, keyCode: 187) } label: { Image(systemName: "square.on.square") }
+                    .help("最近任务").disabled(!model.canControl(main.id))
+                if main.presence == .sleeping {
+                    Button(action: model.wakeMainDisplay) {
+                        Label(model.isWakingMain ? "正在唤醒" : "唤醒主屏", systemImage: "sun.max")
+                    }
+                    .disabled(!model.isConnected || model.isWakingMain)
+                    .help("向手机发送一次唤醒按键；不会自动解锁")
+                } else {
+                    Label(model.focusedScreenID == main.id ? "键盘正在控制主屏" : "点击主屏后输入", systemImage: "keyboard")
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                        .help("右键返回 · 中键 Home · ⌘A 全选 · ⌘C / V / X 复制、粘贴、剪切")
+                }
+            }
+            Spacer(minLength: 8)
+            Text("副屏仅观看").font(.system(size: 11)).foregroundStyle(.secondary)
+        }
+        .buttonStyle(.borderless)
+        .font(.system(size: 12))
+        .foregroundStyle(Color(white: 0.96))
+        .frame(height: 24)
+        .padding(.horizontal, 20)
+        .padding(.top, 12)
+        .padding(.bottom, 8)
+        .environment(\.colorScheme, .dark)
+    }
+
+    private var recordingButton: some View {
+        Button {
+            if model.isRecording { model.stopRecording() } else { model.startRecording() }
+        } label: {
+            HStack(spacing: 6) {
+                if model.isFinishingRecording {
+                    ProgressView().controlSize(.small)
+                    Text("正在保存…")
+                } else {
+                    Image(systemName: model.isRecording ? "stop.circle.fill" : "record.circle")
+                        .foregroundStyle(model.isRecording ? Color.red : Color.primary)
+                    Text(model.isRecording ? "停止录制" : "录制全部屏幕")
+                    if model.isRecording {
+                        Text(recordingDuration(model.recordingElapsed)).monospacedDigit()
+                    }
+                }
+            }
+        }
+        .disabled(model.isFinishingRecording || (!model.isRecording && !model.canStartRecording))
+        .help("将主屏和所有副屏保存为小体积 MP4；录制中出现的新副屏也会加入。⌘⇧R 开始或停止")
+    }
+
+    private var recordingSettings: some View {
+        Menu {
+            Toggle("副屏开启时自动录制", isOn: $model.autoRecordSecondary)
+            Text("全部副屏关闭后自动停止并保存")
+                .font(.caption)
+            Divider()
+            Button("选择自动录屏目录…", action: model.chooseRecordingDirectory)
+            Button("打开录屏目录", action: model.revealRecordingDirectory)
+            Text(model.recordingDirectory.path).font(.caption)
+        } label: {
+            Label("录屏设置", systemImage: "gearshape").labelStyle(.iconOnly)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("录屏设置：可在副屏开启时自动录制，全部副屏关闭后停止并保存")
     }
 
     private var emptyStage: some View {
@@ -267,6 +339,7 @@ private struct ViewerWindow: View {
                 Link("安装说明", destination: URL(string: "https://github.com/yiminspace/scrcpy-viewer/blob/main/docs/install.md")!)
             }
         }.padding(30).frame(maxWidth: .infinity, maxHeight: .infinity).background(stageColor)
+            .environment(\.colorScheme, .dark)
     }
 
     private var emptyHint: String {
@@ -296,7 +369,20 @@ private struct ViewerWindow: View {
             if model.diagnostics.directory != nil {
                 Label("诊断记录已开启", systemImage: "record.circle").foregroundStyle(.orange)
             }
-            Text("画面静止时仍保持连接")
+            if model.autoRecordSecondary {
+                Label("自动录屏", systemImage: "record.circle")
+                    .help("副屏开启时自动录制，全部副屏关闭后自动保存")
+            }
+            if model.isRecording {
+                Label("录制全部屏幕 · \(recordingDuration(model.recordingElapsed))", systemImage: "record.circle.fill")
+                    .foregroundStyle(.red).monospacedDigit()
+            } else if model.isFinishingRecording {
+                Text("正在保存录屏…")
+            } else if model.lastRecordingURL != nil {
+                Button("查看录屏", action: model.revealRecording).buttonStyle(.borderless)
+            } else {
+                Text("画面静止时仍保持连接")
+            }
         }.font(.caption).foregroundStyle(.secondary).padding(.horizontal, 16).padding(.vertical, 9)
     }
 }
@@ -304,20 +390,18 @@ private struct ViewerWindow: View {
 private struct DisplayPane: View {
     @ObservedObject var model: ViewerModel
     let screen: DisplayPresentation
-    let selected: Bool
+    let imageHeight: CGFloat
     let retry: () -> Void
     @State private var showsDetails = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 7) {
-                Text(screen.display.title).font(.headline)
-                if !screen.display.isMain {
-                    Image(systemName: "eye").font(.caption).foregroundStyle(.secondary).help("副屏仅观看")
-                }
-                Spacer(minLength: 5)
-                Circle().fill(statusColor(screen)).frame(width: 6, height: 6)
-                Text(screen.status).font(.caption).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Text(screen.display.title)
+                    .font(.system(size: 13, weight: .medium)).lineLimit(1)
+                Spacer(minLength: 4)
+                Circle().fill(statusColor(screen)).frame(width: 5, height: 5)
+                Text(screen.status).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
                 Button {
                     model.setInputFocus(false, for: screen.id)
                     showsDetails.toggle()
@@ -325,9 +409,9 @@ private struct DisplayPane: View {
                     .buttonStyle(.plain).foregroundStyle(.secondary).help("屏幕与连接详情")
                     .popover(isPresented: $showsDetails, arrowEdge: .bottom) { details.padding(20).frame(width: 360) }
             }
-            if screen.display.isMain { mainControls }
+            .padding(.horizontal, 6)
+            .frame(height: 20)
             ZStack {
-                Color.black
                 if let frame = screen.frame {
                     Image(decorative: frame, scale: 1)
                         .resizable().interpolation(.high).aspectRatio(contentMode: .fit)
@@ -353,75 +437,32 @@ private struct DisplayPane: View {
                         }
                         Text(screen.status).font(.callout)
                         if screen.error != nil { Button("重试画面连接", action: retry) }
-                    }.foregroundStyle(.white.opacity(0.75)).padding(20)
+                    }.foregroundStyle(.white.opacity(0.65)).padding(20)
                 }
                 if screen.isRetained {
                     VStack {
                         Spacer()
-                        HStack {
-                            Image(systemName: "clock")
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text("\(screen.status) · 保留最后画面").font(.caption.weight(.medium))
+                        HStack(alignment: .top, spacing: 7) {
+                            Image(systemName: "clock").font(.system(size: 11))
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("\(screen.status) · 最后画面").font(.system(size: 11, weight: .medium))
                                 if let date = screen.lastFrameAt {
-                                    Text(date.formatted(date: .abbreviated, time: .standard)).font(.caption2)
+                                    Text(date.formatted(date: .numeric, time: .standard))
+                                        .font(.system(size: 10)).lineLimit(1).minimumScaleFactor(0.8)
                                 }
                             }
                             Spacer(minLength: 0)
                             if screen.error != nil { Button("重试", action: retry) }
                         }
-                        .foregroundStyle(.white).padding(12).background(.black.opacity(0.8))
+                        .foregroundStyle(.white).padding(10).background(.black.opacity(0.8))
                     }
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .clipShape(RoundedRectangle(cornerRadius: 6))
-            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(
-                model.focusedScreenID == screen.id ? Color.accentColor : (selected ? Color.accentColor.opacity(0.35) : Color.white.opacity(0.08)),
-                lineWidth: model.focusedScreenID == screen.id ? 2 : 1
-            ).allowsHitTesting(false))
-            if let error = screen.error {
-                Text(error).font(.caption).foregroundStyle(.orange).lineLimit(3).textSelection(.enabled)
-            } else {
-                Text(inputHint)
-                    .font(.caption2).foregroundStyle(.secondary)
-            }
+            .frame(maxWidth: .infinity)
+            .frame(height: imageHeight)
         }
-    }
-
-    private var inputHint: String {
-        if !screen.display.isMain, screen.presence != .active {
-            return screen.lastFrameAt == nil ? "该副屏未留下画面" : "历史画面 · 副屏已停止输出"
-        }
-        if !screen.isLive { return screen.lastFrameAt == nil ? "收到第一帧后显示画面" : "此画面不是当前实时状态" }
-        if !screen.display.isMain { return "仅观看 · 点击和按键不会发送到副屏" }
-        if !screen.controlReady { return "画面已连接，正在准备主屏控制" }
-        if model.focusedScreenID == screen.id { return "键盘正在控制主屏 · ⌘A 全选 · ⌘C / V / X 复制、粘贴、剪切" }
-        return "点击画面控制主屏 · 右键返回 · 中键 Home"
-    }
-
-    private var mainControls: some View {
-        HStack(spacing: 13) {
-            Button { model.navigateMain(screen.id, keyCode: 4) } label: { Image(systemName: "chevron.left") }
-                .help("返回").disabled(!model.canControl(screen.id))
-            Button { model.navigateMain(screen.id, keyCode: 3) } label: { Image(systemName: "house") }
-                .help("Home").disabled(!model.canControl(screen.id))
-            Button { model.navigateMain(screen.id, keyCode: 187) } label: { Image(systemName: "square.on.square") }
-                .help("最近任务").disabled(!model.canControl(screen.id))
-            Spacer(minLength: 0)
-            if screen.presence == .sleeping {
-                Button(action: model.wakeMainDisplay) {
-                    Label(model.isWakingMain ? "正在唤醒" : "唤醒主屏", systemImage: "sun.max")
-                }
-                .disabled(!model.isConnected || model.isWakingMain)
-                .help("向手机发送一次唤醒按键；不会自动解锁")
-            } else {
-                Label(model.focusedScreenID == screen.id ? "键盘已聚焦" : "点击后输入", systemImage: "keyboard")
-                    .font(.caption2).foregroundStyle(model.focusedScreenID == screen.id ? Color.accentColor : Color.secondary)
-            }
-        }
-        .buttonStyle(.borderless)
-        .font(.system(size: 12))
-        .frame(height: 21)
+        .foregroundStyle(Color(white: 0.96))
+        .environment(\.colorScheme, .dark)
     }
 
     private var details: some View {
@@ -450,11 +491,22 @@ private struct DisplayPane: View {
     }
 }
 
-private var stageColor: Color { Color(nsColor: .underPageBackgroundColor) }
+private var stageColor: Color { .black }
+
+private func displayAspectRatio(_ screen: DisplayPresentation) -> CGFloat {
+    if let frame = screen.frame { return CGFloat(frame.width) / CGFloat(max(1, frame.height)) }
+    return CGFloat(max(1, screen.display.width)) / CGFloat(max(1, screen.display.height))
+}
+
+private func recordingDuration(_ elapsed: TimeInterval) -> String {
+    let seconds = max(0, Int(elapsed))
+    if seconds >= 3_600 { return String(format: "%d:%02d:%02d", seconds / 3_600, seconds / 60 % 60, seconds % 60) }
+    return String(format: "%02d:%02d", seconds / 60, seconds % 60)
+}
 
 private func statusColor(_ screen: DisplayPresentation) -> Color {
     if screen.error != nil && screen.presence == .active { return .orange }
     if screen.isLive { return Color(red: 0.14, green: 0.47, blue: 0.4) }
-    if screen.presence == .active { return .blue }
+    if screen.presence == .active { return .gray }
     return .secondary
 }

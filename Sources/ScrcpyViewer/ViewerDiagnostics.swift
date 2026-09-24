@@ -126,7 +126,8 @@ final class ViewerDiagnostics {
             }
             var state: [String: Any] = [
                 "updatedAt": formatter.string(from: Date()), "mainInputSupported": true, "secondaryReadOnly": true,
-                "layout": model.layout.rawValue, "followNewScreen": model.followNewScreen,
+                "layout": "并排", "followNewScreen": model.followNewScreen,
+                "isRecording": model.isRecording, "isFinishingRecording": model.isFinishingRecording,
                 "connected": model.isConnected, "displays": displays,
                 "currentDisplayIDs": model.currentScreens.map { $0.display.displayID },
                 "historyDisplayIDs": model.historyScreens.map { $0.display.displayID },

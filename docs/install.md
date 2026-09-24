@@ -7,7 +7,7 @@
 - `adb`, usually installed with Homebrew's `android-platform-tools`.
 - The official **scrcpy-server 3.3.3**. The full desktop scrcpy client is optional when using the managed server below.
 
-The app is designed around standard Android display discovery and scrcpy. Multiple-display behavior has been tested on Android 15; capture, input and encoder availability vary by device. It cannot reveal displays that Android does not make capturable. Audio and video recording are not implemented.
+The app is designed around standard Android display discovery and scrcpy. Multiple-display behavior has been tested on Android 15; capture, input and encoder availability vary by device. It cannot reveal displays that Android does not make capturable. Audio is not implemented.
 
 ## Download and open
 
@@ -68,12 +68,28 @@ Quit the app before replacing it with a newer release. Verify each new download'
 
 To uninstall, quit and remove **Scrcpy Viewer.app**. You may also remove `~/Library/Application Support/Scrcpy Viewer/Dependencies` if you no longer need its server. Keep shared adb or scrcpy installations if other tools use them.
 
-The app keeps display history in memory. It writes screenshots only when you save them; optional diagnostics are off by default. No automatic screen recordings or remote analytics are created.
+The app keeps retained source frames in memory and remembers saved recording paths locally for playback. Screenshots and manual recordings are saved on request; automatic recording and optional diagnostics are off by default. Automatic recording starts only after you enable it in the gear menu. No remote analytics are created. Removing the app does not delete files you have exported.
+
+## Screenshots and recording
+
+The camera button saves the main display and every active secondary together as one PNG. It includes screens outside the visible scroll area. Exported images touch edge to edge with no padding, gaps or title bars; non-live frames include a status and date overlay.
+
+Use the toolbar recording button to choose an MP4 destination and start recording. The app records the main display and all active secondary displays together, including screens discovered after recording starts and screens outside the visible scroll area. Stop from the toolbar to finish; the completion control at the bottom of the window reveals all saved parts in Finder. Switching devices or quitting also finishes the current recording.
+
+The silent H.264 output follows the screens' combined proportions, up to 720 pixels tall and 2560 pixels wide, at 12 fps. Bitrate adjusts to the output size and is capped at 1.6 Mbps. No additional encoder tools are required. New screens or rotations that change the layout start a consecutive MP4 part, preserving proportions without added black padding. The first file keeps the chosen name; later files add `-part002-<unique suffix>.mp4` and subsequent numbers. A screen that sleeps or disappears during recording keeps a dated last frame with its status. GIF export is not available.
+
+To record secondary-display sessions automatically, enable **副屏开启时自动录制** in the gear menu. This option is off by default and remembered across launches. It starts when the selected device has an active secondary display and a frame is available, then stops after the last active secondary sleeps, disappears or disconnects. A manual stop prevents immediate restart until all secondaries have closed. Manually started recordings continue when secondaries close. Automatic files go to `~/Movies/Scrcpy Viewer`; use the same menu to select or open the folder.
+
+Saved recordings appear in the sidebar with timestamps and thumbnails. Click one to open it in the system default video player. The history list loads on launch and refreshes after saves or a recording-folder change. It reads only the selected recording folder and files explicitly saved through the app; manually chosen paths are remembered locally across launches.
 
 ## Troubleshooting
 
 - **No device:** run `adb devices -l`, check USB debugging and accept the authorization prompt. Do not post the real serial number in an issue.
 - **Missing/incompatible server:** run the included setup script, then click the app's recheck button. The viewer deliberately rejects unknown server protocols or a mismatching server hash.
-- **No secondary display:** the app can only mirror displays Android enumerates and permits it to capture. A sleeping display appears in history, not as a live stream.
+- **No secondary display:** the app can only mirror displays Android enumerates and permits it to capture. A sleeping or ended secondary leaves the live canvas; the sidebar history contains saved recordings.
 - **Many screens fail:** the phone may have exhausted its hardware encoder resources. A desktop-only test cannot establish a device's concurrent streaming limit.
-- **No sound or recording button:** these features have not been implemented. Use the original scrcpy client if needed.
+- **No sound:** audio is not implemented. Recordings are silent.
+- **Small text in recordings:** output is capped at 720 pixels in height and 2560 pixels in width. Many screens share that width; save a PNG screenshot for a higher-resolution still image.
+- **Several MP4 files:** screen count or orientation changed during recording. The numbered parts preserve the changing proportions without adding black padding.
+- **Automatic recording does not restart after a manual stop:** close all secondary displays before the next automatic session, or explicitly toggle automatic recording off and on.
+- **A video is missing from history:** history reads the selected recording folder and remembered app exports. Check the folder in the gear menu and whether the file has been moved or deleted.

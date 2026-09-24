@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## Unreleased
+
+- Display the main screen and all active secondary screens edge to edge on one black canvas.
+- Replace blue focus outlines with a compact, neutral keyboard status.
+- Save all screens on the canvas together in one PNG without padding, gaps or title bars.
+- Record all screens to compact, silent H.264 MP4 files at their combined aspect ratio, starting numbered parts when layouts change and retaining dated last frames for ended sources.
+- Add optional automatic recording for secondary-display sessions, with a persistent setting and configurable save folder.
+- Replace inactive-display history with saved recordings, timestamps, thumbnails and playback in the system default video player on click.
+
 ## v0.4.1
 
 - Initial packaged release for Apple Silicon Macs running macOS 14 or later.

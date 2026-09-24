@@ -35,6 +35,7 @@ struct MainDisplayInputView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> MainDisplayNSView {
         let view = MainDisplayNSView()
+        view.focusRingType = .none
         updateNSView(view, context: context)
         return view
     }

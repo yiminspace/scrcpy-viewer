@@ -1,6 +1,6 @@
 # Architecture
 
-`ViewerCore` owns dependency resolution, bounded adb commands, logical display discovery, the scrcpy 3.3.3 wire protocol, capture/control sessions and H.264 decoding. `ScrcpyViewer` owns SwiftUI state and presentation.
+`ViewerCore` owns dependency resolution, bounded adb commands, logical display discovery, the scrcpy 3.3.3 wire protocol, capture/control sessions, H.264 decoding and video-file recording. `ScrcpyViewer` owns SwiftUI state and presentation.
 
 The runtime dependencies are a trusted local `adb` executable and the official scrcpy Android server matching protocol version **3.3.3**. A compatible local installation can supply the server. An optional installation flow must fetch that fixed official release only after an explicit user action, verify its pinned checksum, and store it outside the repository. It must not silently replace another installed scrcpy version. The application is an independent client; scrcpy's Apache-2.0 license remains separate from the application's MIT license. See [third-party notices](../THIRD_PARTY_NOTICES.md).
 
@@ -12,10 +12,22 @@ Control messages are generated only by explicit user actions. Input targets the 
 
 The UI isolates stream callbacks by generation. An old session cannot update the new session's card after an OFF→ON transition or device switch. The stream is only described as live after a frame has actually decoded. Static images are not disconnected merely for lacking new frames.
 
-`DisplayScenePolicy` keeps inactive secondary displays in folded history, separate from the live stage. Explicit history selection reveals a cached frame without restarting capture. Clearing history releases frames and remembers full identities until those sources become active again; an OFF display still enumerated by Android does not immediately reappear. Main-screen input focus suppresses automatic follow for that arrival only, so it is never replayed after typing ends.
+The live scene and device list include the main display and active secondaries. Inactive secondary frames may remain in memory for a recording's source status, but do not become sidebar history entries or reappear through history selection. Main-screen input focus suppresses automatic follow for that arrival only, so it is never replayed after typing ends.
 
 Discovery uses Android logical display IDs and source-display metadata. Availability and capturability depend on the device and the application that owns the display. All secondary displays follow the same discovery and read-only capture rules.
 
-Audio playback and video-file recording are not currently implemented. H.264 packets are decoded for viewing; saving the current image exports a PNG rather than a video.
+The live stage places the main display and all active secondary displays in a horizontal row with no gap on one black canvas. Keyboard focus uses a neutral status indicator without a focus outline. Selection and scroll position do not determine recording contents.
 
-No remote service is exposed. Android's normal USB debugging authorization is required. History frames live in memory. Diagnostic screen capture is opt-in and must remain outside source control; clearing in-app history does not delete separate screenshot exports or diagnostic artifacts.
+`CanvasComposition` draws decoded images into a tightly packed row with a common height, without padding, gaps or title bars. Screenshots use the main display and all active secondaries in the current scene, including screens outside the scroll viewport, and export one PNG up to 2160 pixels tall and 8192 pixels wide. Non-live frames carry status and date overlays inside their image area.
+
+Recording uses the same composition through `AVAssetWriter` for silent H.264 MP4 at 12 fps. Output dimensions follow the combined aspect ratio, capped at 720 pixels in height and 2560 pixels in width without upscaling sources. The target bitrate follows the output area, capped at 1.6 Mbps. The recording roster starts with the main display and active secondaries, then adds active displays discovered during the session. Ended sources retain a dated last frame and status for that recording, independently of the current live scene.
+
+The model starts a new MP4 part when the roster, source aspect ratios or composition dimensions change. Each part therefore has stable dimensions without letterboxing or stretching subsequent layouts. The first part uses the chosen base filename; later parts append an ordered suffix such as `-part002-<unique suffix>.mp4`. Previous parts finalize asynchronously while the new part records. Stopping, switching devices and quitting finalize all outstanding parts before releasing them. Finder reveal selects all successfully saved parts.
+
+An `NSSavePanel` chooses the destination for manual recording. The gear menu's automatic recording option defaults to off and persists through `UserDefaults`. `SecondaryAutoRecordingPolicy` starts when the selected device has an active secondary and a frame is available, and stops only automatic recordings when all secondaries become inactive or the option is disabled. Overlapping secondaries share a session. Manual stops and failures suppress restart until no secondary remains; saving defers new starts. Automatic files use a persistent directory, defaulting to `~/Movies/Scrcpy Viewer`, which can be selected or opened from the gear menu.
+
+`RecordingHistoryCatalog` builds sidebar history from the selected recording directory and explicitly saved file URLs persisted locally in `UserDefaults`; it does not scan other directories. Entries refresh on launch, after saves and when the directory changes. Each entry presents a file timestamp and a thumbnail generated from an early local video frame through AVFoundation. Clicking an entry opens the file in the system default video player. Catalog loading and thumbnail generation do not start playback or send device input.
+
+Recording does not capture the Mac desktop, inject device input or start audio. GIF export and audio playback are not implemented.
+
+No remote service is exposed. Android's normal USB debugging authorization is required. Retained source frames live in memory; recording history refers to saved local video files. Diagnostic screen capture is opt-in and must remain outside source control. Screenshot exports, saved recordings and diagnostic artifacts are separate files.
