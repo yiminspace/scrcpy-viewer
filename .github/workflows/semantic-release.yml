@@ -54,7 +54,7 @@ jobs:
             echo "Newer commits are on main; their own successful pipeline will release them."
             echo "ready=false" >> "$GITHUB_OUTPUT"
           fi
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         if: steps.guard.outputs.ready == 'true'
         with:
           python-version: "3.12"
