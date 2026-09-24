@@ -94,7 +94,7 @@ jobs:
             --server "$RUNNER_TEMP/viewer-deps/scrcpy/3.3.3/scrcpy-server"
       - name: Prepare installation and version notes
         run: python scripts/release.py notes --tag "$RELEASE_TAG" --output dist/RELEASE_NOTES.md
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: Scrcpy-Viewer-${{ inputs.tag }}-macOS-arm64-attempt-${{ github.run_attempt }}
           if-no-files-found: error
