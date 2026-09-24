@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.5.0 (2026-09-24)
+
+### Features
+
+- 合并多屏画布并加入录屏与录像历史 ([#4](https://github.com/yiminspace/scrcpy-viewer/pull/4),
+  [`a41045f`](https://github.com/yiminspace/scrcpy-viewer/commit/a41045fd681a3c23f1080ee826325a04f52a241e))
+
+
 ## Unreleased
 
 - Display the main screen and all active secondary screens edge to edge on one black canvas.
