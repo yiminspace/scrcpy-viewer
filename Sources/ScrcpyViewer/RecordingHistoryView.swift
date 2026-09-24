@@ -60,6 +60,7 @@ private struct SavedRecordingRow: View {
     @State private var previewUnavailable = false
     @State private var isHovered = false
     @State private var trashIsHovered = false
+    @FocusState private var trashIsFocused: Bool
 
     var body: some View {
         HStack(spacing: 4) {
@@ -113,6 +114,9 @@ private struct SavedRecordingRow: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .focused($trashIsFocused)
+            .opacity(isHovered || trashIsFocused ? 1 : 0)
+            .allowsHitTesting(isHovered || trashIsFocused)
             .onHover { trashIsHovered = $0 }
             .help("移到废纸篓")
             .accessibilityLabel("移到废纸篓")
