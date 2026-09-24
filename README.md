@@ -50,7 +50,7 @@ If a display appears or rotates, the app combines the changing layouts into the 
 
 Automatic recording is off by default. Enable **副屏开启时自动录制** in the gear menu to start when the selected device has an active secondary display and a frame is available. Recording stops and saves after the last active secondary sleeps, disappears or disconnects. Multiple overlapping secondary displays share one recording session. A manual stop prevents restarting until all secondaries have closed; manually started recordings are not stopped by secondary-display activity. The setting persists across launches. Automatic files go to `~/Movies/Scrcpy Viewer`; the gear menu lets you change or open this folder.
 
-The sidebar's recording history shows saved files with their time and a thumbnail. Click an entry to open it in the system default video player. History loads on launch and after saves from the selected recording folder and files explicitly saved by this app; it does not search other folders. Manually chosen save paths are remembered locally so those recordings remain available after relaunch.
+The sidebar's recording history shows saved files with their time and a thumbnail. Click an entry to open it in the system default video player. The trash button on each entry moves the video to the system Trash and removes it from history. History loads on launch and after saves from the selected recording folder and files explicitly saved by this app; it does not search other folders. Manually chosen save paths are remembered locally so those recordings remain available after relaunch.
 
 ## What is not included
 

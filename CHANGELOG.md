@@ -12,6 +12,8 @@
 
 ## Unreleased
 
+- Add a per-recording trash button that moves saved videos to the system Trash and removes their history entries.
+
 - Display the main screen and all active secondary screens edge to edge on one black canvas.
 - Replace blue focus outlines with a compact, neutral keyboard status.
 - Save all screens on the canvas together in one PNG without padding, gaps or title bars.

@@ -68,6 +68,7 @@ struct ScrcpyViewerApp: App {
 private struct ViewerWindow: View {
     @ObservedObject var model: ViewerModel
     @State private var recordingPlaybackError: String?
+    @State private var recordingDeletionError: String?
 
     var body: some View {
         HStack(spacing: 0) {
@@ -117,6 +118,9 @@ private struct ViewerWindow: View {
         .alert("无法打开录屏", isPresented: Binding(get: { recordingPlaybackError != nil }, set: { if !$0 { recordingPlaybackError = nil } })) {
             Button("好", role: .cancel) { recordingPlaybackError = nil }
         } message: { Text(recordingPlaybackError ?? "") }
+        .alert("录屏未删除", isPresented: Binding(get: { recordingDeletionError != nil }, set: { if !$0 { recordingDeletionError = nil } })) {
+            Button("好", role: .cancel) { recordingDeletionError = nil }
+        } message: { Text(recordingDeletionError ?? "") }
     }
 
     private var devicePicker: some View {
@@ -158,7 +162,8 @@ private struct ViewerWindow: View {
                     Divider().padding(.top, 10).padding(.bottom, 5)
                     RecordingHistoryView(recordings: model.recordingHistory,
                                          refresh: model.refreshRecordingHistory,
-                                         select: playRecording)
+                                         select: playRecording,
+                                         trash: trashRecording)
                 }
                 .padding(.horizontal, 8)
             }
@@ -180,6 +185,15 @@ private struct ViewerWindow: View {
         }
         if !NSWorkspace.shared.open(recording.url) {
             recordingPlaybackError = "无法使用系统播放器打开这段录屏，请确认已安装支持 MP4 的播放器。"
+        }
+    }
+
+    private func trashRecording(_ recording: SavedRecording) {
+        do {
+            try model.trashRecording(recording)
+        } catch {
+            recordingDeletionError = error.localizedDescription
+            model.refreshRecordingHistory()
         }
     }
 

@@ -539,6 +539,31 @@ final class ViewerModel: ObservableObject {
         }
     }
 
+    @discardableResult
+    func trashRecording(_ recording: SavedRecording) throws -> URL? {
+        guard recordingHistory.contains(where: { $0.id == recording.id }) else { return nil }
+        var trashedURL: NSURL?
+        do {
+            let values = try recording.url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+            guard values.isRegularFile == true, values.isSymbolicLink != true else {
+                throw NSError(domain: "ScrcpyViewer", code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "这条录屏已变更，请刷新列表后重试。"])
+            }
+            try FileManager.default.trashItem(at: recording.url, resultingItemURL: &trashedURL)
+        } catch let error as NSError where error.domain == NSCocoaErrorDomain
+            && (error.code == NSFileNoSuchFileError || error.code == NSFileReadNoSuchFileError) {
+            // An externally removed file only needs its stale history entry cleared.
+        }
+        let paths = (UserDefaults.standard.stringArray(forKey: "recordingHistoryPaths") ?? [])
+            .filter { URL(fileURLWithPath: $0).standardizedFileURL.path != recording.id }
+        UserDefaults.standard.set(paths, forKey: "recordingHistoryPaths")
+        recordingHistory.removeAll { $0.id == recording.id }
+        if lastRecordingURL?.standardizedFileURL.path == recording.id { lastRecordingURL = nil }
+        // A fresh generation prevents an in-flight catalog read from restoring a deleted row.
+        refreshRecordingHistory()
+        return trashedURL as URL?
+    }
+
     private func rememberRecording(_ url: URL) {
         let path = url.standardizedFileURL.path
         var paths = UserDefaults.standard.stringArray(forKey: "recordingHistoryPaths") ?? []
