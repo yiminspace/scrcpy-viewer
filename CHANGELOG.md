@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.6.0 (2026-09-24)
+
+### Features
+
+- 完善多屏录制与历史管理 ([#5](https://github.com/yiminspace/scrcpy-viewer/pull/5),
+  [`47769ce`](https://github.com/yiminspace/scrcpy-viewer/commit/47769ce187dc12ca3b1cc8ac2f9b3fdf1e8d0918))
+
+
 ## v0.5.0 (2026-09-24)
 
 ### Features
