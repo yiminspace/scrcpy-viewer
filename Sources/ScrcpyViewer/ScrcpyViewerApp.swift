@@ -68,6 +68,7 @@ struct ScrcpyViewerApp: App {
 private struct ViewerWindow: View {
     @ObservedObject var model: ViewerModel
     @State private var recordingPlaybackError: String?
+    @State private var recordingDeletionError: String?
 
     var body: some View {
         HStack(spacing: 0) {
@@ -109,11 +110,17 @@ private struct ViewerWindow: View {
             Button("好", role: .cancel) { model.saveError = nil }
         } message: { Text(model.saveError ?? "") }
         .alert("录屏未保存", isPresented: Binding(get: { model.recordingError != nil }, set: { if !$0 { model.recordingError = nil } })) {
+            if model.recordingRecoveryDirectory != nil {
+                Button("查看已录制部分", action: model.revealUnfinishedRecording)
+            }
             Button("好", role: .cancel) { model.recordingError = nil }
         } message: { Text(model.recordingError ?? "") }
         .alert("无法打开录屏", isPresented: Binding(get: { recordingPlaybackError != nil }, set: { if !$0 { recordingPlaybackError = nil } })) {
             Button("好", role: .cancel) { recordingPlaybackError = nil }
         } message: { Text(recordingPlaybackError ?? "") }
+        .alert("录屏未删除", isPresented: Binding(get: { recordingDeletionError != nil }, set: { if !$0 { recordingDeletionError = nil } })) {
+            Button("好", role: .cancel) { recordingDeletionError = nil }
+        } message: { Text(recordingDeletionError ?? "") }
     }
 
     private var devicePicker: some View {
@@ -155,7 +162,8 @@ private struct ViewerWindow: View {
                     Divider().padding(.top, 10).padding(.bottom, 5)
                     RecordingHistoryView(recordings: model.recordingHistory,
                                          refresh: model.refreshRecordingHistory,
-                                         select: playRecording)
+                                         select: playRecording,
+                                         trash: trashRecording)
                 }
                 .padding(.horizontal, 8)
             }
@@ -177,6 +185,15 @@ private struct ViewerWindow: View {
         }
         if !NSWorkspace.shared.open(recording.url) {
             recordingPlaybackError = "无法使用系统播放器打开这段录屏，请确认已安装支持 MP4 的播放器。"
+        }
+    }
+
+    private func trashRecording(_ recording: SavedRecording) {
+        do {
+            try model.trashRecording(recording)
+        } catch {
+            recordingDeletionError = error.localizedDescription
+            model.refreshRecordingHistory()
         }
     }
 
@@ -306,7 +323,7 @@ private struct ViewerWindow: View {
             }
         }
         .disabled(model.isFinishingRecording || (!model.isRecording && !model.canStartRecording))
-        .help("将主屏和所有副屏保存为小体积 MP4；录制中出现的新副屏也会加入。⌘⇧R 开始或停止")
+        .help("将主屏和所有副屏保存为一个小体积 MP4；新增副屏也会加入，停止后自动合成。⌘⇧R 开始或停止")
     }
 
     private var recordingSettings: some View {

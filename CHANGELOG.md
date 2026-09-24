@@ -12,10 +12,12 @@
 
 ## Unreleased
 
+- Add a hover-revealed per-recording trash button with a confirmation dialog, defaulting to Cancel, before moving saved videos to the system Trash and removing their history entries.
+
 - Display the main screen and all active secondary screens edge to edge on one black canvas.
 - Replace blue focus outlines with a compact, neutral keyboard status.
 - Save all screens on the canvas together in one PNG without padding, gaps or title bars.
-- Record all screens to compact, silent H.264 MP4 files at their combined aspect ratio, starting numbered parts when layouts change and retaining dated last frames for ended sources.
+- Save each recording session as one compact, silent H.264 MP4, including layout changes and dated last frames for ended sources. Earlier layouts leave space on the right for screens that appear later.
 - Add optional automatic recording for secondary-display sessions, with a persistent setting and configurable save folder.
 - Replace inactive-display history with saved recordings, timestamps, thumbnails and playback in the system default video player on click.
 

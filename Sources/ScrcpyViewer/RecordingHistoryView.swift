@@ -6,7 +6,9 @@ struct RecordingHistoryView: View {
     let recordings: [SavedRecording]
     let refresh: () -> Void
     let select: (SavedRecording) -> Void
+    let trash: (SavedRecording) -> Void
     @State private var expanded = true
+    @State private var recordingToTrash: SavedRecording?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -40,11 +42,25 @@ struct RecordingHistoryView: View {
                 } else {
                     LazyVStack(spacing: 3) {
                         ForEach(recordings) { recording in
-                            SavedRecordingRow(recording: recording) { select(recording) }
+                            SavedRecordingRow(recording: recording,
+                                              select: { select(recording) },
+                                              trash: { recordingToTrash = recording })
                         }
                     }
                 }
             }
+        }
+        .alert("将这段录屏移到废纸篓？", isPresented: Binding(
+            get: { recordingToTrash != nil },
+            set: { if !$0 { recordingToTrash = nil } }
+        ), presenting: recordingToTrash) { recording in
+            Button("取消", role: .cancel) {}
+                .keyboardShortcut(.defaultAction)
+            Button("移到废纸篓", role: .destructive) {
+                trash(recording)
+            }
+        } message: { recording in
+            Text("录制时间：\(recording.recordedAt.formatted(date: .abbreviated, time: .standard))\n\(recording.url.lastPathComponent)\n\n移除后可在访达的废纸篓中恢复。")
         }
     }
 }
@@ -52,54 +68,77 @@ struct RecordingHistoryView: View {
 private struct SavedRecordingRow: View {
     let recording: SavedRecording
     let select: () -> Void
+    let trash: () -> Void
     @State private var preview: RecordingPreview?
     @State private var previewUnavailable = false
     @State private var isHovered = false
+    @State private var trashIsHovered = false
+    @FocusState private var trashIsFocused: Bool
 
     var body: some View {
-        Button(action: select) {
-            HStack(spacing: 8) {
-                ZStack {
-                    Color.black
-                    if let preview {
-                        Image(decorative: preview.image, scale: 1)
-                            .resizable().interpolation(.high).scaledToFit()
-                    } else {
-                        Image(systemName: previewUnavailable ? "film" : "video")
-                            .font(.system(size: 17, weight: .light)).foregroundStyle(.white.opacity(0.5))
+        HStack(spacing: 4) {
+            Button(action: select) {
+                HStack(spacing: 8) {
+                    ZStack {
+                        Color.black
+                        if let preview {
+                            Image(decorative: preview.image, scale: 1)
+                                .resizable().interpolation(.high).scaledToFit()
+                        } else {
+                            Image(systemName: previewUnavailable ? "film" : "video")
+                                .font(.system(size: 17, weight: .light)).foregroundStyle(.white.opacity(0.5))
+                        }
                     }
+                    .frame(width: 52, height: 40)
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                    .overlay(alignment: .bottomTrailing) {
+                        Image(systemName: "play.fill")
+                            .font(.system(size: 8))
+                            .foregroundStyle(.white)
+                            .padding(4)
+                            .background(.black.opacity(0.6), in: Circle())
+                            .padding(3)
+                    }
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(recording.recordedAt, format: .dateTime.year().month(.twoDigits).day(.twoDigits))
+                            .font(.system(size: 11, weight: .medium))
+                        Text(recording.recordedAt, format: .dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits).second(.twoDigits))
+                            .font(.system(size: 11)).monospacedDigit().foregroundStyle(.secondary)
+                        Text(metadata)
+                            .font(.system(size: 10)).foregroundStyle(.tertiary)
+                    }
+                    .lineLimit(1)
+                    Spacer(minLength: 0)
                 }
-                .frame(width: 64, height: 44)
-                .clipShape(RoundedRectangle(cornerRadius: 4))
-                .overlay(alignment: .bottomTrailing) {
-                    Image(systemName: "play.fill")
-                        .font(.system(size: 8))
-                        .foregroundStyle(.white)
-                        .padding(4)
-                        .background(.black.opacity(0.6), in: Circle())
-                        .padding(3)
-                }
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(recording.recordedAt, format: .dateTime.year().month(.twoDigits).day(.twoDigits))
-                        .font(.system(size: 11, weight: .medium))
-                    Text(recording.recordedAt, format: .dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits).second(.twoDigits))
-                        .font(.system(size: 11)).monospacedDigit().foregroundStyle(.secondary)
-                    Text(metadata)
-                        .font(.system(size: 10)).foregroundStyle(.tertiary)
-                }
-                .lineLimit(1)
-                Spacer(minLength: 0)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
             }
-            .padding(.horizontal, 8).padding(.vertical, 7)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(isHovered ? Color.primary.opacity(0.06) : Color.clear,
-                        in: RoundedRectangle(cornerRadius: 6))
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+            .help("使用系统播放器播放 \(recording.url.lastPathComponent)")
+            .accessibilityLabel("使用系统播放器播放录屏，\(recording.recordedAt.formatted(date: .abbreviated, time: .standard))，\(metadata)")
+
+            Button(action: trash) {
+                Image(systemName: "trash")
+                    .font(.system(size: 11))
+                    .foregroundStyle(trashIsHovered ? Color.primary : Color.secondary)
+                    .frame(width: 20, height: 26)
+                    .background(trashIsHovered ? Color.primary.opacity(0.08) : Color.clear,
+                                in: RoundedRectangle(cornerRadius: 4))
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .focused($trashIsFocused)
+            .opacity(isHovered || trashIsFocused ? 1 : 0)
+            .allowsHitTesting(isHovered || trashIsFocused)
+            .onHover { trashIsHovered = $0 }
+            .help("将录屏移到废纸篓…")
+            .accessibilityLabel("将录屏移到废纸篓…")
+            .accessibilityValue(recording.recordedAt.formatted(date: .abbreviated, time: .standard))
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, 8).padding(.vertical, 7)
+        .background(isHovered ? Color.primary.opacity(0.06) : Color.clear,
+                    in: RoundedRectangle(cornerRadius: 6))
         .onHover { isHovered = $0 }
-        .help("使用系统播放器播放 \(recording.url.lastPathComponent)")
-        .accessibilityLabel("使用系统播放器播放录屏，\(recording.recordedAt.formatted(date: .abbreviated, time: .standard))，\(metadata)")
         .task(id: "\(recording.id):\(recording.recordedAt.timeIntervalSince1970):\(recording.fileSize)") {
             preview = nil
             previewUnavailable = false

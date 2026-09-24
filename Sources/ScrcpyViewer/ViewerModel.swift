@@ -60,6 +60,7 @@ final class ViewerModel: ObservableObject {
     @Published private(set) var isFinishingRecording = false
     @Published private(set) var recordingElapsed: TimeInterval = 0
     @Published private(set) var lastRecordingURL: URL?
+    @Published private(set) var recordingRecoveryDirectory: URL?
     @Published private(set) var recordingHistory: [SavedRecording] = []
     @Published var recordingError: String?
     @Published var autoRecordSecondary = UserDefaults.standard.bool(forKey: "autoRecordSecondary") {
@@ -87,6 +88,9 @@ final class ViewerModel: ObservableObject {
     private var recordingIsAutomatic = false
     private var autoRecordingPolicy = SecondaryAutoRecordingPolicy()
     private var recordingBaseURL: URL?
+    private var recordingSessionDirectory: URL?
+    private var recordingHasFailed = false
+    private var recordingPublicationInProgress = false
     private var recordingPart = 1
     private var recordingPartStartedAt: TimeInterval = 0
     private var recordingLayoutKey = ""
@@ -319,7 +323,7 @@ final class ViewerModel: ObservableObject {
         panel.allowedContentTypes = [.mpeg4Movie]
         panel.nameFieldStringValue = recordingFilename()
         panel.title = "录制全部屏幕"
-        panel.message = "紧贴画面录制，无黑边。高度最高 720 像素，12 帧/秒，无音频；屏幕数量或方向变化时自动另存下一段。"
+        panel.message = "全部屏幕保存为一个 MP4。高度最高 720 像素，12 帧/秒，无音频；新副屏出现前的位置留空，停止后会自动合成。"
         recordingPanelIsOpen = true
         let response = panel.runModal()
         recordingPanelIsOpen = false
@@ -335,6 +339,8 @@ final class ViewerModel: ObservableObject {
         guard canStartRecording else { return }
         recordingError = nil
         lastRecordingURL = nil
+        recordingRecoveryDirectory = nil
+        recordingHasFailed = false
         savedRecordingParts = [:]
         recordingElapsed = 0
         recordingPartStartedAt = 0
@@ -345,7 +351,11 @@ final class ViewerModel: ObservableObject {
         recordingGeneration = UUID()
         let initial = recordingRoster.update(currentIDs: currentScreens.map(\.id), screens: recordingSnapshots(screens))
         do {
-            recorder = try makeRecorder(to: url, screens: initial)
+            let directory = url.deletingLastPathComponent()
+                .appendingPathComponent(".\(url.lastPathComponent).\(UUID().uuidString).session", isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+            recordingSessionDirectory = directory
+            recorder = try makeRecorder(to: recordingPartURL(in: directory, number: 1), screens: initial)
             recordingLayoutKey = layoutKey(initial)
             recordingStartedAt = ProcessInfo.processInfo.systemUptime
             isRecording = true
@@ -397,7 +407,6 @@ final class ViewerModel: ObservableObject {
                 switch result {
                 case .success(let url):
                     self.savedRecordingParts[number] = url
-                    self.rememberRecording(url)
                 case .failure(let error): self.recordingFailed(error)
                 }
                 self.completeRecordingIfReady()
@@ -406,24 +415,87 @@ final class ViewerModel: ObservableObject {
     }
 
     private func completeRecordingIfReady() {
-        guard isFinishingRecording, !isRecording, retiringRecordingParts.isEmpty else { return }
+        guard isFinishingRecording, !isRecording, retiringRecordingParts.isEmpty,
+              !recordingPublicationInProgress else { return }
         recordingRoster = RecordingRoster()
+        guard !recordingHasFailed, let output = recordingBaseURL,
+              savedRecordingParts.count == recordingPart else {
+            recordingError = recordingError ?? "录屏未完整保存，已保留可恢复的画面。"
+            finishRecordingPublication(nil)
+            return
+        }
+        recordingPublicationInProgress = true
+        let parts = savedRecordingParts.keys.sorted().compactMap { savedRecordingParts[$0] }
+        Task { [self] in
+            do {
+                let url = try await RecordingFinalizer.publish(parts: parts, to: output)
+                finishRecordingPublication(url)
+            } catch {
+                recordingError = error.localizedDescription
+                finishRecordingPublication(nil)
+            }
+        }
+    }
+
+    private func finishRecordingPublication(_ url: URL?) {
+        if let url {
+            lastRecordingURL = url
+            rememberRecording(url)
+            if let directory = recordingSessionDirectory {
+                try? FileManager.default.removeItem(at: directory)
+            }
+        } else {
+            autoRecordingPolicy.suppressUntilNoSecondary()
+            preserveUnfinishedRecording()
+        }
+        recordingSessionDirectory = nil
+        savedRecordingParts = [:]
+        recordingPublicationInProgress = false
         isFinishingRecording = false
-        lastRecordingURL = savedRecordingParts.keys.sorted().first.flatMap { savedRecordingParts[$0] }
         completeShutdownIfReady()
         reconcileAutoRecording()
     }
 
+    private func preserveUnfinishedRecording() {
+        guard let directory = recordingSessionDirectory else { return }
+        if let contents = try? FileManager.default.contentsOfDirectory(atPath: directory.path), contents.isEmpty {
+            try? FileManager.default.removeItem(at: directory)
+            return
+        }
+        // Make recovery files visible without publishing an incomplete video as a success.
+        let name = (recordingBaseURL?.deletingPathExtension().lastPathComponent ?? "recording")
+            + "-unfinished-" + UUID().uuidString.prefix(6)
+        let visible = directory.deletingLastPathComponent().appendingPathComponent(name, isDirectory: true)
+        do {
+            try FileManager.default.moveItem(at: directory, to: visible)
+            recordingRecoveryDirectory = visible
+        } catch {
+            recordingRecoveryDirectory = directory
+        }
+        if let path = recordingRecoveryDirectory?.path {
+            recordingError = (recordingError ?? "录屏未保存") + "\n已录制的部分保留在：\(path)"
+        }
+    }
+
     private func recordingFailed(_ error: Error) {
-        recordingError = error.localizedDescription
+        if !recordingHasFailed { recordingError = error.localizedDescription }
+        recordingHasFailed = true
         autoRecordingPolicy.suppressUntilNoSecondary()
         stopRecording(suppressAutomaticRestart: true, captureLastFrame: false)
+        if !isRecording && !isFinishingRecording && recordingSessionDirectory != nil {
+            isFinishingRecording = true
+            completeRecordingIfReady()
+        }
     }
 
     func revealRecording() {
-        let urls = savedRecordingParts.keys.sorted().compactMap { savedRecordingParts[$0] }
-        guard !urls.isEmpty else { return }
-        NSWorkspace.shared.activateFileViewerSelecting(urls)
+        guard let url = lastRecordingURL else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
+    func revealUnfinishedRecording() {
+        guard let directory = recordingRecoveryDirectory else { return }
+        NSWorkspace.shared.open(directory)
     }
 
     func chooseRecordingDirectory() {
@@ -465,6 +537,31 @@ final class ViewerModel: ObservableObject {
                 self.recordingHistory = entries
             }
         }
+    }
+
+    @discardableResult
+    func trashRecording(_ recording: SavedRecording) throws -> URL? {
+        guard recordingHistory.contains(where: { $0.id == recording.id }) else { return nil }
+        var trashedURL: NSURL?
+        do {
+            let values = try recording.url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+            guard values.isRegularFile == true, values.isSymbolicLink != true else {
+                throw NSError(domain: "ScrcpyViewer", code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "这条录屏已变更，请刷新列表后重试。"])
+            }
+            try FileManager.default.trashItem(at: recording.url, resultingItemURL: &trashedURL)
+        } catch let error as NSError where error.domain == NSCocoaErrorDomain
+            && (error.code == NSFileNoSuchFileError || error.code == NSFileReadNoSuchFileError) {
+            // An externally removed file only needs its stale history entry cleared.
+        }
+        let paths = (UserDefaults.standard.stringArray(forKey: "recordingHistoryPaths") ?? [])
+            .filter { URL(fileURLWithPath: $0).standardizedFileURL.path != recording.id }
+        UserDefaults.standard.set(paths, forKey: "recordingHistoryPaths")
+        recordingHistory.removeAll { $0.id == recording.id }
+        if lastRecordingURL?.standardizedFileURL.path == recording.id { lastRecordingURL = nil }
+        // A fresh generation prevents an in-flight catalog read from restoring a deleted row.
+        refreshRecordingHistory()
+        return trashedURL as URL?
     }
 
     private func rememberRecording(_ url: URL) {
@@ -517,17 +614,19 @@ final class ViewerModel: ObservableObject {
         }.joined(separator: ",")
     }
 
+    private func recordingPartURL(in directory: URL, number: Int) -> URL {
+        directory.appendingPathComponent(String(format: "part-%04d.mp4", number))
+    }
+
     private func captureRecordingFrame() {
         guard isRecording, let currentRecorder = recorder, let recordingStartedAt else { return }
         recordingElapsed = max(0, ProcessInfo.processInfo.systemUptime - recordingStartedAt)
         let included = recordingRoster.update(currentIDs: currentScreens.map(\.id), screens: recordingSnapshots(screens))
         let nextKey = layoutKey(included)
-        if nextKey != recordingLayoutKey, let baseURL = recordingBaseURL {
+        if nextKey != recordingLayoutKey, let directory = recordingSessionDirectory {
             let nextPart = recordingPart + 1
-            let filename = baseURL.deletingPathExtension().lastPathComponent
-                + String(format: "-part%03d-", nextPart) + UUID().uuidString.prefix(6) + ".mp4"
             do {
-                let next = try makeRecorder(to: baseURL.deletingLastPathComponent().appendingPathComponent(filename), screens: included)
+                let next = try makeRecorder(to: recordingPartURL(in: directory, number: nextPart), screens: included)
                 // Hold the previous layout through the boundary, then start the new
                 // exact-aspect segment without waiting for disk finalization.
                 finishPart(currentRecorder, number: recordingPart, duration: recordingElapsed - recordingPartStartedAt)
