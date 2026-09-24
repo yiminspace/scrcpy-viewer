@@ -109,6 +109,9 @@ private struct ViewerWindow: View {
             Button("好", role: .cancel) { model.saveError = nil }
         } message: { Text(model.saveError ?? "") }
         .alert("录屏未保存", isPresented: Binding(get: { model.recordingError != nil }, set: { if !$0 { model.recordingError = nil } })) {
+            if model.recordingRecoveryDirectory != nil {
+                Button("查看已录制部分", action: model.revealUnfinishedRecording)
+            }
             Button("好", role: .cancel) { model.recordingError = nil }
         } message: { Text(model.recordingError ?? "") }
         .alert("无法打开录屏", isPresented: Binding(get: { recordingPlaybackError != nil }, set: { if !$0 { recordingPlaybackError = nil } })) {
@@ -306,7 +309,7 @@ private struct ViewerWindow: View {
             }
         }
         .disabled(model.isFinishingRecording || (!model.isRecording && !model.canStartRecording))
-        .help("将主屏和所有副屏保存为小体积 MP4；录制中出现的新副屏也会加入。⌘⇧R 开始或停止")
+        .help("将主屏和所有副屏保存为一个小体积 MP4；新增副屏也会加入，停止后自动合成。⌘⇧R 开始或停止")
     }
 
     private var recordingSettings: some View {
