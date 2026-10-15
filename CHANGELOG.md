@@ -2,6 +2,17 @@
 
 <!-- version list -->
 
+## v0.7.0 (2026-10-15)
+
+### Features
+
+- Group recording history by date ([#6](https://github.com/yiminspace/scrcpy-viewer/pull/6),
+  [`d69073b`](https://github.com/yiminspace/scrcpy-viewer/commit/d69073b4d9d365eb3eeb9e58126cc60cb3a65aa3))
+
+- 录屏历史按日期分组 ([#6](https://github.com/yiminspace/scrcpy-viewer/pull/6),
+  [`d69073b`](https://github.com/yiminspace/scrcpy-viewer/commit/d69073b4d9d365eb3eeb9e58126cc60cb3a65aa3))
+
+
 ## v0.6.0 (2026-09-24)
 
 ### Features
