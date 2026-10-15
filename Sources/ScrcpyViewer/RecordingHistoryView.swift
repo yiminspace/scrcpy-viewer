@@ -10,6 +10,12 @@ struct RecordingHistoryView: View {
     @State private var expanded = true
     @State private var recordingToTrash: SavedRecording?
 
+    private var recordingDays: [(date: Date, recordings: [SavedRecording])] {
+        let calendar = Calendar.current
+        let grouped = Dictionary(grouping: recordings) { calendar.startOfDay(for: $0.recordedAt) }
+        return grouped.keys.sorted(by: >).map { (date: $0, recordings: grouped[$0] ?? []) }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
@@ -40,11 +46,26 @@ struct RecordingHistoryView: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.horizontal, 8).padding(.bottom, 8)
                 } else {
-                    LazyVStack(spacing: 3) {
-                        ForEach(recordings) { recording in
-                            SavedRecordingRow(recording: recording,
-                                              select: { select(recording) },
-                                              trash: { recordingToTrash = recording })
+                    LazyVStack(alignment: .leading, spacing: 3) {
+                        ForEach(recordingDays, id: \.date) { day in
+                            Section {
+                                ForEach(day.recordings) { recording in
+                                    SavedRecordingRow(recording: recording,
+                                                      select: { select(recording) },
+                                                      trash: { recordingToTrash = recording })
+                                }
+                            } header: {
+                                HStack(spacing: 8) {
+                                    Text(day.date, format: .dateTime.year().month(.twoDigits).day(.twoDigits))
+                                        .font(.system(size: 11, weight: .medium))
+                                        .foregroundStyle(.secondary)
+                                        .accessibilityAddTraits(.isHeader)
+                                    Divider()
+                                }
+                                .padding(.horizontal, 8)
+                                .padding(.top, 9)
+                                .padding(.bottom, 3)
+                            }
                         }
                     }
                 }
@@ -100,10 +121,8 @@ private struct SavedRecordingRow: View {
                             .padding(3)
                     }
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(recording.recordedAt, format: .dateTime.year().month(.twoDigits).day(.twoDigits))
-                            .font(.system(size: 11, weight: .medium))
                         Text(recording.recordedAt, format: .dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits).second(.twoDigits))
-                            .font(.system(size: 11)).monospacedDigit().foregroundStyle(.secondary)
+                            .font(.system(size: 11, weight: .medium)).monospacedDigit()
                         Text(metadata)
                             .font(.system(size: 10)).foregroundStyle(.tertiary)
                     }
