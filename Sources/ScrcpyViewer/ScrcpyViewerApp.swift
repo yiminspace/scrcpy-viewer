@@ -361,7 +361,10 @@ private struct ViewerWindow: View {
 
     private var emptyHint: String {
         if model.dependencyError != nil { return "请安装 adb 和兼容的 scrcpy 服务端，再点击重新检查。下载包内附有依赖安装脚本，详情见安装说明。" }
-        if model.selectedDevice?.connectionState == "unauthorized" { return "请在手机上允许这台 Mac 进行 USB 调试。授权后屏幕会自动出现。" }
+        if model.selectedDevice?.connectionState == "unauthorized" { return "请在手机上允许这台 Mac 进行 adb 调试。授权后屏幕会自动出现。" }
+        if !model.isConnected, let serial = model.selectedSerial, WirelessReconnectPolicy.isNetworkSerial(serial) {
+            return "正在自动重连无线设备。请确认手机与电脑网络互通，手机已开启无线 adb，且 IP 地址未改变。"
+        }
         if model.selectedDevice?.connectionState == "offline" { return "adb 报告设备离线。请检查 USB 连接，等待设备恢复。" }
         if model.isConnected { return "主屏和系统可枚举的副屏会自动出现在左侧。" }
         return "使用 USB 连接手机，打开 USB 调试，并在手机上允许这台 Mac。"
