@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.9.0 (2026-10-16)
+
+### Features
+
+- 按设备身份发现无线连接并支持停止和恢复重连 ([#8](https://github.com/yiminspace/scrcpy-viewer/pull/8),
+  [`7115df6`](https://github.com/yiminspace/scrcpy-viewer/commit/7115df6e46f720b91f2fde389fe33b8313269e02))
+
+
 ## v0.8.0 (2026-10-16)
 
 ### Features
