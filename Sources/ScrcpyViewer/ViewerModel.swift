@@ -45,7 +45,7 @@ struct DisplayPresentation: Identifiable {
 @MainActor
 final class ViewerModel: ObservableObject {
     @Published private(set) var devices: [AndroidDevice] = []
-    @Published private(set) var selectedSerial: String?
+    @Published private(set) var selectedSerial: String? = UserDefaults.standard.string(forKey: "lastSelectedDeviceSerial")
     @Published private(set) var screens: [DisplayPresentation] = []
     @Published var selectedScreenID: String?
     @Published var followNewScreen = true
@@ -669,6 +669,7 @@ final class ViewerModel: ObservableObject {
         screens.removeAll()
         scenePolicy.resetSelection()
         selectedSerial = serial
+        if let serial { UserDefaults.standard.set(serial, forKey: "lastSelectedDeviceSerial") }
         selectedScreenID = serial.flatMap { selectedByDevice[$0] }
         discoveryError = nil
         interactionError = nil

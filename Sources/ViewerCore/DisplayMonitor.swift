@@ -8,6 +8,7 @@ public final class DisplayMonitor {
     private var timer: DispatchSourceTimer?
     private var requestedSerial: String?
     private var running = false
+    private var reconnectPolicy = WirelessReconnectPolicy()
 
     public init(dependencies: ViewerDependencies, onUpdate: @escaping (DiscoverySnapshot) -> Void) {
         self.dependencies = dependencies; self.onUpdate = onUpdate
@@ -35,7 +36,12 @@ public final class DisplayMonitor {
         queue.async { [weak self] in self?.requestedSerial = serial; self?.poll() }
     }
 
-    public func refresh() { queue.async { [weak self] in self?.poll() } }
+    public func refresh() {
+        queue.async { [weak self] in
+            self?.reconnectPolicy.reset()
+            self?.poll()
+        }
+    }
 
     private func poll() {
         guard running else { return }
@@ -46,17 +52,23 @@ public final class DisplayMonitor {
             if let requestedSerial { selected = devices.first { $0.serial == requestedSerial } }
             else { selected = devices.first(where: \.isConnected) ?? devices.first }
             guard let device = selected else {
-                onUpdate(DiscoverySnapshot(devices: devices, displays: [], selectedSerial: requestedSerial))
+                let wireless = requestedSerial.map(WirelessReconnectPolicy.isNetworkSerial) == true
+                onUpdate(DiscoverySnapshot(devices: devices, displays: [], selectedSerial: requestedSerial,
+                    error: wireless ? "无线设备未连接，正在自动重连。请确认手机与电脑网络互通，且无线 adb 已开启。" : nil))
+                reconnectWirelessDevice(devices: devices)
                 return
             }
             // Keep the first chosen device across unplug/replug; never silently
             // switch to another person's phone when the current one disappears.
             if requestedSerial == nil { requestedSerial = device.serial }
             guard device.isConnected else {
-                let hint = device.connectionState == "unauthorized" ? "请解锁手机，允许这台电脑进行 USB 调试。" : "设备离线，请检查 USB 连接。"
+                let hint = device.connectionState == "unauthorized" ? "请在手机上允许这台电脑进行 adb 调试。" :
+                    (WirelessReconnectPolicy.isNetworkSerial(device.serial) ? "无线设备离线，正在自动重连。" : "设备离线，请检查 USB 连接。")
                 onUpdate(DiscoverySnapshot(devices: devices, displays: [], selectedSerial: device.serial, error: hint))
+                reconnectWirelessDevice(devices: devices)
                 return
             }
+            reconnectWirelessDevice(devices: devices)
             do {
                 let dump = try CommandRunner.checked(executable: dependencies.adbURL, arguments: ["-s", device.serial, "shell", "dumpsys", "display"], timeout: 5)
                 let displays = DisplayParser.parse(dump, serial: device.serial)
@@ -67,6 +79,15 @@ public final class DisplayMonitor {
         } catch {
             onUpdate(DiscoverySnapshot(devices: [], displays: [], selectedSerial: requestedSerial, error: error.localizedDescription))
         }
+    }
+
+    private func reconnectWirelessDevice(devices: [AndroidDevice]) {
+        guard let target = reconnectPolicy.target(serial: requestedSerial, devices: devices,
+            now: ProcessInfo.processInfo.systemUptime) else { return }
+        // Stay on the discovery queue, bound each attempt, and let the next devices
+        // poll confirm connectivity. Command output alone does not mean a live stream.
+        _ = try? CommandRunner.run(executable: dependencies.adbURL, arguments: ["connect", target], timeout: 2)
+        reconnectPolicy.attemptFinished(now: ProcessInfo.processInfo.systemUptime)
     }
 
     deinit { timer?.cancel() }

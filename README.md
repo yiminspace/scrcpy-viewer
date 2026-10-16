@@ -38,6 +38,10 @@ After installation, launch from Finder, Spotlight, or the Dock. From a terminal:
 open "$HOME/Applications/Scrcpy Viewer.app"
 ```
 
+## Wireless devices
+
+For wireless adb, first pair or run `adb connect` in a terminal, then select the device in the app. The app remembers the last selection across launches and retries its numeric IP address and port while disconnected: immediately, then with exponential backoff (1, 2, 4, 8, 16, up to 30 seconds) and ±10% jitter, capped at 30 seconds. Each wait begins after the previous attempt finishes; discovery polls may add about a second. A confirmed connection, device change, or manual retry resets the backoff. Wireless adb must remain enabled on the phone; if its IP address changes, connect and select the new endpoint. The app does not enable wireless debugging or wake the screen automatically.
+
 ## Screenshots and recording
 
 The camera button saves the main screen and all active secondary screens in a single PNG. Screens outside the visible scroll area are included. Images sit edge to edge, without padding, gaps or title bars; any non-live frame carries its status and date inside that image.
