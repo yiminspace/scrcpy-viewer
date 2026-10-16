@@ -88,6 +88,15 @@ private struct ViewerWindow: View {
         .toolbar {
             ToolbarItemGroup(placement: .navigation) {
                 devicePicker
+                if model.hasWirelessSelection {
+                    Button(action: model.toggleWirelessReconnect) {
+                        Label(model.wirelessReconnectStatus == .automatic ? "停止重连" : "继续重连",
+                              systemImage: model.wirelessReconnectStatus == .automatic ? "pause.circle" : "arrow.clockwise.circle")
+                    }
+                    .help(model.wirelessReconnectStatus == .automatic
+                          ? "停止自动重连，保留当前连接。连续离线 10 分钟也会自动停止。"
+                          : "恢复自动重连，并立即尝试连接。")
+                }
                 Button(action: model.refresh) { Image(systemName: "arrow.clockwise") }
                     .help("重新发现设备和屏幕，并重试连接失败的画面")
             }
@@ -351,7 +360,7 @@ private struct ViewerWindow: View {
                 .font(.title3.weight(.medium))
             Text(emptyHint).font(.callout).foregroundStyle(.secondary)
                 .multilineTextAlignment(.center).frame(maxWidth: 390)
-            Button("重新检查", action: model.refresh)
+            Button(model.hasWirelessSelection && model.wirelessReconnectStatus != .automatic ? "继续重连" : "重新检查", action: model.refresh)
             if model.dependencyError != nil {
                 Link("安装说明", destination: URL(string: "https://github.com/yiminspace/scrcpy-viewer/blob/main/docs/install.md")!)
             }
@@ -363,6 +372,11 @@ private struct ViewerWindow: View {
         if model.dependencyError != nil { return "请安装 adb 和兼容的 scrcpy 服务端，再点击重新检查。下载包内附有依赖安装脚本，详情见安装说明。" }
         if model.selectedDevice?.connectionState == "unauthorized" { return "请在手机上允许这台 Mac 进行 adb 调试。授权后屏幕会自动出现。" }
         if !model.isConnected, let serial = model.selectedSerial, WirelessReconnectPolicy.isNetworkSerial(serial) {
+            if model.wirelessReconnectStatus != .automatic {
+                return model.wirelessReconnectStatus == .timedOut
+                    ? "连续 10 分钟未恢复连接，已停止自动重连。点击继续重连可再次尝试。"
+                    : "自动重连已停止。点击继续重连可再次尝试。"
+            }
             return "正在自动重连无线设备。请确认手机与电脑网络互通，手机已开启无线 adb，且 IP 地址未改变。"
         }
         if model.selectedDevice?.connectionState == "offline" { return "adb 报告设备离线。请检查 USB 连接，等待设备恢复。" }
@@ -381,7 +395,8 @@ private struct ViewerWindow: View {
     private var footer: some View {
         HStack(spacing: 8) {
             Circle().fill(model.isConnected ? Color.green : Color.secondary).frame(width: 6, height: 6)
-            Text(model.isConnected ? "adb 已连接" : "等待设备连接")
+            Text(model.isConnected ? "adb 已连接" :
+                 (model.hasWirelessSelection && model.wirelessReconnectStatus != .automatic ? "重连已停止" : "等待设备连接"))
             if let serial = model.selectedSerial {
                 Text(serial).font(.system(size: 11, design: .monospaced)).foregroundStyle(.tertiary)
             }

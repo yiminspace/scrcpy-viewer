@@ -37,8 +37,12 @@ public struct DiscoverySnapshot: Sendable {
     public let displays: [AndroidDisplay]
     public let selectedSerial: String?
     public let error: String?
-    public init(devices: [AndroidDevice], displays: [AndroidDisplay], selectedSerial: String?, error: String? = nil) {
+    public let replacingSerial: String?
+    public let reconnectStatus: WirelessReconnectStatus
+    public init(devices: [AndroidDevice], displays: [AndroidDisplay], selectedSerial: String?, error: String? = nil, replacingSerial: String? = nil, reconnectStatus: WirelessReconnectStatus = .automatic) {
         self.devices = devices; self.displays = displays; self.selectedSerial = selectedSerial; self.error = error
+        self.replacingSerial = replacingSerial
+        self.reconnectStatus = reconnectStatus
     }
 }
 
