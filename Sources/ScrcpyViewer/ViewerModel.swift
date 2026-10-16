@@ -50,6 +50,7 @@ final class ViewerModel: ObservableObject {
     @Published var selectedScreenID: String?
     @Published var followNewScreen = true
     @Published private(set) var discoveryError: String?
+    @Published private(set) var wirelessReconnectStatus: WirelessReconnectStatus = .automatic
     @Published private(set) var dependencyError: String?
     @Published private(set) var dependencies: ViewerDependencies?
     @Published var saveError: String?
@@ -159,6 +160,7 @@ final class ViewerModel: ObservableObject {
 
     func refresh() {
         guard !isShuttingDown else { return }
+        wirelessReconnectStatus = .automatic
         if monitor == nil {
             configureMonitor()
         } else {
@@ -172,12 +174,27 @@ final class ViewerModel: ObservableObject {
         }
     }
 
+    var hasWirelessSelection: Bool {
+        selectedSerial.map(WirelessReconnectPolicy.isNetworkSerial) == true
+    }
+
+    func toggleWirelessReconnect() {
+        guard !isShuttingDown, hasWirelessSelection else { return }
+        if wirelessReconnectStatus == .automatic {
+            wirelessReconnectStatus = .paused
+            monitor?.pauseWirelessReconnect()
+        } else {
+            refresh()
+        }
+    }
+
     func selectDevice(_ serial: String) {
         guard !isShuttingDown, !serial.isEmpty, serial != selectedSerial else { return }
         if let oldSerial = selectedSerial, let id = selectedScreenID {
             selectedByDevice[oldSerial] = id
         }
         explicitlySelectedSerial = serial
+        wirelessReconnectStatus = .automatic
         switchDevice(serial)
         monitor?.selectDevice(serial)
     }
@@ -679,8 +696,12 @@ final class ViewerModel: ObservableObject {
         defer { reconcileAutoRecording() }
         devices = snapshot.devices
         // A snapshot produced before the picker change must not revive old-device streams.
-        if let requested = explicitlySelectedSerial, snapshot.selectedSerial != requested { return }
+        if let requested = explicitlySelectedSerial, snapshot.selectedSerial != requested {
+            guard snapshot.replacingSerial == requested else { return }
+            explicitlySelectedSerial = snapshot.selectedSerial
+        }
         if selectedSerial != snapshot.selectedSerial { switchDevice(snapshot.selectedSerial) }
+        wirelessReconnectStatus = snapshot.reconnectStatus
         discoveryError = snapshot.error
         guard isConnected else {
             for index in screens.indices {

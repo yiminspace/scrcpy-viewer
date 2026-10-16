@@ -122,7 +122,8 @@ final class WirelessReconnectTests: XCTestCase {
         XCTAssertEqual(commands.prefix(3), ["devices -l", "connect \(endpoint)", "devices -l"])
         XCTAssertEqual(commands.filter { $0.hasPrefix("connect ") }, ["connect \(endpoint)"])
         XCTAssertTrue(commands.allSatisfy {
-            $0 == "devices -l" || $0 == "connect \(endpoint)" || $0 == "-s \(endpoint) shell dumpsys display"
+            $0 == "devices -l" || $0 == "connect \(endpoint)" || $0 == "-s \(endpoint) shell dumpsys display" ||
+                $0 == "-s \(endpoint) shell getprop ro.serialno" || $0 == "-s \(endpoint) shell getprop persist.adb.wifi.guid"
         })
     }
 }

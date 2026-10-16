@@ -40,7 +40,11 @@ open "$HOME/Applications/Scrcpy Viewer.app"
 
 ## Wireless devices
 
-For wireless adb, first pair or run `adb connect` in a terminal, then select the device in the app. The app remembers the last selection across launches and retries its numeric IP address and port while disconnected: immediately, then with exponential backoff (1, 2, 4, 8, 16, up to 30 seconds) and ±10% jitter, capped at 30 seconds. Each wait begins after the previous attempt finishes; discovery polls may add about a second. A confirmed connection, device change, or manual retry resets the backoff. Wireless adb must remain enabled on the phone; if its IP address changes, connect and select the new endpoint. The app does not enable wireless debugging or wake the screen automatically.
+For wireless adb, first pair or run `adb connect` in a terminal, then select the device in the app. The app remembers the last selection across launches and retries its numeric IP address and port while disconnected: immediately, then with exponential backoff (1, 2, 4, 8, 16, up to 30 seconds) and ±10% jitter, capped at 30 seconds. Each wait begins after the previous attempt finishes; discovery polls may add about a second. A confirmed connection, device change, or manual retry resets the backoff. Wireless adb must remain enabled on the phone. The app does not enable wireless debugging or wake the screen automatically.
+
+The app remembers the serial number and ADB service names of the selected, online wireless device. While disconnected it reads `adb mdns services` about every five seconds. Only a matching remembered device is considered: a new endpoint is connected and its serial verified before changing the selection and saved address. New or changed announcements wake reconnect immediately; unchanged cached announcements do not reset backoff. Duplicate interface records are collapsed and TLS services are preferred. Ambiguous endpoints of the preferred service type, unauthorized devices, and identity mismatches never trigger an automatic switch.
+
+Discovery requires the phone to advertise ADB services, multicast connectivity, and mDNS support in the local adb. Without announcements, retrying the saved address continues with backoff for up to ten minutes per offline session. Use **Stop reconnecting** to pause earlier, or **Resume reconnecting** (also available after timeout) to try immediately and start a fresh session. Pausing stops outbound reconnect and mDNS attempts without closing an existing connection. If discovery is unavailable and the address changes, reconnect and select the new endpoint manually. The app never scans a subnet or automatically selects unrelated devices.
 
 ## Screenshots and recording
 
@@ -87,3 +91,7 @@ Please use [issues](https://github.com/yiminspace/scrcpy-viewer/issues) for repr
 ## License and upstream
 
 This independent project is licensed under [MIT](LICENSE). It is not an official Genymobile project. The upstream scrcpy server remains licensed under Apache-2.0; it is not committed to this repository or bundled into release downloads. See [third-party notices](THIRD_PARTY_NOTICES.md).
+
+### Optional root boot helper
+
+Some systems turn native wireless debugging off after reboot. [android-wireless-debugging-boot.sh](scripts/android-wireless-debugging-boot.sh) can be manually installed as a root-only executable in the root manager's `service.d` directory. It waits for boot completion and a Wi-Fi address, then enables the system wireless-debugging setting once. It uses native adbd TLS and mDNS, replaces no system binary, and does not keep overriding later manual changes. Initial authorization and trusted-network confirmation remain required. This helper requires root; ordinary devices use the system Wireless debugging settings.
