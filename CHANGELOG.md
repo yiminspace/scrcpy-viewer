@@ -2,6 +2,18 @@
 
 <!-- version list -->
 
+## v0.8.0 (2026-10-16)
+
+### Features
+
+- Reconnect selected wireless devices with exponential backoff
+  ([#7](https://github.com/yiminspace/scrcpy-viewer/pull/7),
+  [`2bdd718`](https://github.com/yiminspace/scrcpy-viewer/commit/2bdd7188e430e90c9be5d5f9754783e302b1d0f5))
+
+- 无线设备自动重连并采用指数退避 ([#7](https://github.com/yiminspace/scrcpy-viewer/pull/7),
+  [`2bdd718`](https://github.com/yiminspace/scrcpy-viewer/commit/2bdd7188e430e90c9be5d5f9754783e302b1d0f5))
+
+
 ## v0.7.0 (2026-10-15)
 
 ### Features
