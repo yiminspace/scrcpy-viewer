@@ -43,7 +43,7 @@ jobs:
             echo "Expected an exact stable SemVer tag, such as v0.4.0." >&2
             exit 1
           fi
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: refs/tags/${{ inputs.tag }}
           fetch-depth: 0
@@ -73,7 +73,7 @@ jobs:
       RELEASE_TAG: ${{ inputs.tag }}
       RELEASE_SHA: ${{ needs.resolve.outputs.commit_sha }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ env.RELEASE_SHA }}
           fetch-depth: 0
