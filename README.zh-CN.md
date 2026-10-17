@@ -85,4 +85,4 @@ bash scripts/setup-dependencies.sh
 
 ### 可选的 root 开机辅助
 
-部分系统会在重启时关闭原生无线调试。可手动将 [android-wireless-debugging-boot.sh](scripts/android-wireless-debugging-boot.sh) 安装到 root 管理器的 `service.d` 目录并设为仅 root 可执行。脚本等待系统启动完成和 Wi-Fi 获得地址，再启用一次系统无线调试；继续使用原生 adbd TLS 和 mDNS，不替换系统程序，也不常驻覆盖用户后续关闭开关的操作。它不代替首次授权或可信网络确认。此辅助需要 root；普通设备仍由用户在系统设置中开启无线调试。
+部分系统会在重启时关闭原生无线调试。可手动将 [android-wireless-debugging-boot.sh](scripts/android-wireless-debugging-boot.sh) 安装到 root 管理器的 `service.d` 目录并设为仅 root 可执行。脚本等待系统启动完成和 Wi-Fi 获得地址，启用系统无线调试，并在后台监听系统因断网关闭无线调试的事件；Wi-Fi 在约三分钟内重新获得 IPv4 地址时，尝试恢复一次。继续使用原生 adbd TLS 和 mDNS，不替换系统程序，不持续强制开关状态。正常联网时手动关闭不会触发恢复；断网恢复等待期间无法区分额外的手动关闭意图，此时可能重新开启。移除脚本后重启可停止此辅助。它不代替首次授权或可信网络确认。此辅助需要 root；普通设备仍由用户在系统设置中开启无线调试。
