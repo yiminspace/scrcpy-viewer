@@ -2,6 +2,18 @@
 
 <!-- version list -->
 
+## v0.9.1 (2026-10-17)
+
+### Bug Fixes
+
+- Recover wireless debugging after network interruptions
+  ([#9](https://github.com/yiminspace/scrcpy-viewer/pull/9),
+  [`28c7ac5`](https://github.com/yiminspace/scrcpy-viewer/commit/28c7ac5cfffd3e5fd9b7031eb3e823392fad97a9))
+
+- Wi-Fi 恢复后重新开启无线调试 ([#9](https://github.com/yiminspace/scrcpy-viewer/pull/9),
+  [`28c7ac5`](https://github.com/yiminspace/scrcpy-viewer/commit/28c7ac5cfffd3e5fd9b7031eb3e823392fad97a9))
+
+
 ## v0.9.0 (2026-10-16)
 
 ### Features
