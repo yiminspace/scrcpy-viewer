@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.10.0 (2026-10-19)
+
+### Features
+
+- 合并同一手机的 USB 与无线连接并支持连接切换 ([#10](https://github.com/yiminspace/scrcpy-viewer/pull/10),
+  [`c876603`](https://github.com/yiminspace/scrcpy-viewer/commit/c87660308b0016783d367726d6351530d4877a45))
+
+
 ## v0.9.1 (2026-10-17)
 
 ### Bug Fixes
