@@ -6,7 +6,8 @@ public enum DeviceParser {
             let parts = line.split(whereSeparator: \.isWhitespace).map(String.init)
             guard parts.count >= 2, ["device", "offline", "unauthorized", "recovery", "sideload", "bootloader"].contains(parts[1]) else { return nil }
             let model = parts.first(where: { $0.hasPrefix("model:") }).map { String($0.dropFirst(6)).replacingOccurrences(of: "_", with: " ") } ?? parts[0]
-            return AndroidDevice(serial: parts[0], model: model, connectionState: parts[1])
+            let transportID = parts.first(where: { $0.hasPrefix("transport_id:") }).map { String($0.dropFirst(13)) }
+            return AndroidDevice(serial: parts[0], model: model, connectionState: parts[1], transportID: transportID)
         }
     }
 }

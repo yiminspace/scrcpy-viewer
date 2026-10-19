@@ -38,7 +38,13 @@ After installation, launch from Finder, Spotlight, or the Dock. From a terminal:
 open "$HOME/Applications/Scrcpy Viewer.app"
 ```
 
-## Wireless devices
+## Devices and connections
+
+The device picker groups USB and wireless transports only after verifying their physical serial numbers. Each phone appears once, with separate USB/wireless status and the active connection in the toolbar. Choose **自动 / USB / 无线** (Auto / USB / Wireless). Auto initially prefers USB, keeps a working connection, and falls back only to another verified transport for the same phone. Pinned modes wait for their chosen transport instead. Switching leaves the other ADB connection available and never wakes the phone.
+
+A transport switch preserves display identity, dated frames, and a manual recording session while rebuilding video and control channels. No screen is marked live until a fresh frame arrives. Selecting a different physical phone still finishes and saves the recording. Unknown identities and matching model names alone never merge devices.
+
+### Wireless devices
 
 For wireless adb, first pair or run `adb connect` in a terminal, then select the device in the app. The app remembers the last selection across launches and retries its numeric IP address and port while disconnected: immediately, then with exponential backoff (1, 2, 4, 8, 16, up to 30 seconds) and ±10% jitter, capped at 30 seconds. Each wait begins after the previous attempt finishes; discovery polls may add about a second. A confirmed connection, device change, or manual retry resets the backoff. Wireless adb must remain enabled on the phone. The app does not enable wireless debugging or wake the screen automatically.
 

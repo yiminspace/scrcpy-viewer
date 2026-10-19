@@ -88,6 +88,14 @@ private struct ViewerWindow: View {
         .toolbar {
             ToolbarItemGroup(placement: .navigation) {
                 devicePicker
+                Picker("连接", selection: Binding(get: { model.connectionMode }, set: { model.setConnectionMode($0) })) {
+                    ForEach(DeviceConnectionMode.allCases, id: \.self) { mode in
+                        Text(mode.title).tag(mode)
+                    }
+                }
+                .frame(width: 105)
+                .help("自动优先使用 USB；当前连接断开时切换到同一手机的可用连接。手动模式只使用指定连接方式。")
+                Text(model.connectionSummary).font(.caption).foregroundStyle(.secondary)
                 if model.hasWirelessSelection {
                     Button(action: model.toggleWirelessReconnect) {
                         Label(model.wirelessReconnectStatus == .automatic ? "停止重连" : "继续重连",
@@ -133,16 +141,12 @@ private struct ViewerWindow: View {
     }
 
     private var devicePicker: some View {
-        Picker("设备", selection: Binding(get: { model.selectedSerial ?? "" }, set: { model.selectDevice($0) })) {
+        Picker("设备", selection: Binding(get: { model.selectedPhysicalDevice?.id ?? "" }, set: { model.selectPhysicalDevice($0) })) {
             if model.devices.isEmpty || model.selectedSerial == nil {
                 Text(model.devices.isEmpty ? "未发现设备" : "选择设备").tag("")
             }
-            if let serial = model.selectedSerial, !model.devices.contains(where: { $0.serial == serial }) {
-                Text("\(serial) · 已断开").tag(serial)
-            }
-            ForEach(model.devices) { device in
-                Text("\(device.model.isEmpty ? device.serial : device.model)\(device.isConnected ? "" : " · \(device.connectionState)")")
-                    .tag(device.serial)
+            ForEach(model.physicalDevices) { device in
+                Text(device.model).tag(device.id)
             }
         }
         .labelsHidden()

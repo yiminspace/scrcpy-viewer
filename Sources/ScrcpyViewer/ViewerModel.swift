@@ -16,6 +16,7 @@ struct DisplayPresentation: Identifiable {
     var state: StreamState = .stopped
     var receivedCurrentFrame = false
     var controlReady = false
+    var isSwitchingConnection = false
 
     var status: String {
         switch presence {
@@ -25,6 +26,7 @@ struct DisplayPresentation: Identifiable {
         case .active:
             if case .failed = state { return "画面连接失败" }
             if receivedCurrentFrame { return "正在显示" }
+            if isSwitchingConnection { return "正在切换连接" }
             if case .stopped = state { return "画面已停止" }
             return "等待画面"
         }
@@ -45,6 +47,8 @@ struct DisplayPresentation: Identifiable {
 @MainActor
 final class ViewerModel: ObservableObject {
     @Published private(set) var devices: [AndroidDevice] = []
+    @Published private(set) var connectionMode = DeviceConnectionMode(rawValue: UserDefaults.standard.string(forKey: "deviceConnectionMode") ?? "") ?? .automatic
+    @Published private(set) var transportAvailable = true
     @Published private(set) var selectedSerial: String? = UserDefaults.standard.string(forKey: "lastSelectedDeviceSerial")
     @Published private(set) var screens: [DisplayPresentation] = []
     @Published var selectedScreenID: String?
@@ -127,7 +131,36 @@ final class ViewerModel: ObservableObject {
         devices.first { $0.serial == selectedSerial }
     }
 
-    var isConnected: Bool { selectedDevice?.isConnected == true }
+    var isConnected: Bool { transportAvailable && selectedDevice?.isConnected == true }
+    var physicalDevices: [PhysicalAndroidDevice] { DeviceConnectionPolicy.groups(devices) }
+    var selectedPhysicalDevice: PhysicalAndroidDevice? {
+        physicalDevices.first { $0.transports.contains { $0.serial == selectedSerial } }
+    }
+    var connectionSummary: String {
+        guard let device = selectedPhysicalDevice else { return "未连接" }
+        return [false, true].compactMap { wireless -> String? in
+            let connections = device.transports.filter { $0.isWireless == wireless }
+            guard !connections.isEmpty else { return nil }
+            let current = connections.contains { $0.serial == selectedSerial } && isConnected
+            let online = connections.contains(where: \.isConnected)
+            return "\(wireless ? "无线" : "USB")\(current ? " · 使用中" : online ? " · 在线" : " · 离线")"
+        }.joined(separator: "  /  ")
+    }
+
+    func selectPhysicalDevice(_ id: String) {
+        guard let device = physicalDevices.first(where: { $0.id == id }),
+              let transport = DeviceConnectionPolicy.select(from: device.transports, current: nil, mode: connectionMode)
+                ?? device.transports.first else { return }
+        selectDevice(transport.serial)
+    }
+
+    func setConnectionMode(_ mode: DeviceConnectionMode) {
+        guard !isShuttingDown, mode != connectionMode else { return }
+        clearInputFocus()
+        connectionMode = mode
+        UserDefaults.standard.set(mode.rawValue, forKey: "deviceConnectionMode")
+        monitor?.setConnectionMode(mode)
+    }
 
     var canStartRecording: Bool {
         !isShuttingDown && !isRecording && !isFinishingRecording && !recordingPanelIsOpen
@@ -175,7 +208,7 @@ final class ViewerModel: ObservableObject {
     }
 
     var hasWirelessSelection: Bool {
-        selectedSerial.map(WirelessReconnectPolicy.isNetworkSerial) == true
+        connectionMode != .usb && (selectedDevice?.physicalSerial != nil || selectedSerial.map(WirelessReconnectPolicy.isNetworkSerial) == true)
     }
 
     func toggleWirelessReconnect() {
@@ -670,6 +703,7 @@ final class ViewerModel: ObservableObject {
                 }
             }
             self.monitor = monitor
+            monitor.setConnectionMode(connectionMode)
             if let serial = selectedSerial { monitor.selectDevice(serial) }
             monitor.start()
         } catch {
@@ -694,13 +728,30 @@ final class ViewerModel: ObservableObject {
 
     private func apply(_ snapshot: DiscoverySnapshot) {
         defer { reconcileAutoRecording() }
+        let previousDevice = selectedDevice
         devices = snapshot.devices
+        transportAvailable = snapshot.transportAvailable
         // A snapshot produced before the picker change must not revive old-device streams.
         if let requested = explicitlySelectedSerial, snapshot.selectedSerial != requested {
             guard snapshot.replacingSerial == requested else { return }
             explicitlySelectedSerial = snapshot.selectedSerial
         }
-        if selectedSerial != snapshot.selectedSerial { switchDevice(snapshot.selectedSerial) }
+        if selectedSerial != snapshot.selectedSerial {
+            let next = devices.first { $0.serial == snapshot.selectedSerial }
+            if let previousDevice, let next, previousDevice.physicalSerial != nil,
+               previousDevice.physicalID == next.physicalID {
+                // Only the transport changes: stable display identities retain
+                // frames, selection and the recording roster across reconnection.
+                clearInputFocus()
+                stopAllStreams()
+                selectedSerial = next.serial
+                UserDefaults.standard.set(next.serial, forKey: "lastSelectedDeviceSerial")
+                for index in screens.indices {
+                    screens[index].presence = .disconnected
+                    screens[index].isSwitchingConnection = true
+                }
+            } else { switchDevice(snapshot.selectedSerial) }
+        }
         wirelessReconnectStatus = snapshot.reconnectStatus
         discoveryError = snapshot.error
         guard isConnected else {
@@ -735,6 +786,7 @@ final class ViewerModel: ObservableObject {
                 screens[index].display = display
                 screens[index].presence = presence
                 if !display.isActive {
+                    screens[index].isSwitchingConnection = false
                     stopStream(display.id)
                     screens[index].receivedCurrentFrame = false
                 } else if !wasActive {
@@ -783,6 +835,7 @@ final class ViewerModel: ObservableObject {
                     self.screens[index].frame = latest.image
                     self.screens[index].lastFrameAt = latest.receivedAt
                     self.screens[index].receivedCurrentFrame = true
+                    self.screens[index].isSwitchingConnection = false
                     self.screens[index].state = .streaming
                     self.screens[index].controlReady = display.isMain && self.streams[id]?.isControlReady == true
                     self.reconcileAutoRecording()
