@@ -19,6 +19,10 @@ public final class DisplayMonitor {
     private var replacementSerial: String?
     private let preferences: UserDefaults
     private var identities: [String: WirelessDeviceIdentity]
+    private var verifiedOnline: [String: WirelessDeviceIdentity] = [:]
+    private var verifiedTransportIDs: [String: String] = [:]
+    private var connectionMode: DeviceConnectionMode = .automatic
+    private var identityMismatches = Set<String>()
     private static let identitiesKey = "wirelessDeviceIdentities.v1"
 
     public init(dependencies: ViewerDependencies, preferences: UserDefaults = .standard, onUpdate: @escaping (DiscoverySnapshot) -> Void) {
@@ -63,6 +67,14 @@ public final class DisplayMonitor {
         }
     }
 
+    public func setConnectionMode(_ mode: DeviceConnectionMode) {
+        queue.async { [weak self] in
+            self?.connectionMode = mode
+            self?.reconnectControl.resume()
+            self?.poll()
+        }
+    }
+
     public func refresh() {
         queue.async { [weak self] in
             self?.reconnectControl.resume()
@@ -72,6 +84,7 @@ public final class DisplayMonitor {
             self?.lastDiscoveryAt = nil
             self?.identityAttemptedFor = nil
             self?.identityVerificationError = nil
+            self?.verifiedOnline.removeAll()
             self?.poll()
         }
     }
@@ -95,24 +108,53 @@ public final class DisplayMonitor {
         guard running else { return }
         do {
             let text = try CommandRunner.checked(executable: dependencies.adbURL, arguments: ["devices", "-l"], timeout: 5)
-            let devices = DeviceParser.parse(text)
-            if let requestedSerial, WirelessReconnectPolicy.isNetworkSerial(requestedSerial) {
-                _ = reconnectControl.allowsAttempt(connected: devices.contains { $0.serial == requestedSerial && $0.isConnected },
-                    now: ProcessInfo.processInfo.systemUptime)
+            var devices = identify(DeviceParser.parse(text))
+            // Retain the selected phone across disappearance so it cannot fall
+            // through to a different connected phone, and its alternate can be selected.
+            if let requestedSerial, !devices.contains(where: { $0.serial == requestedSerial }) {
+                devices.append(AndroidDevice(serial: requestedSerial, model: identities[requestedSerial]?.serialNumber ?? requestedSerial,
+                    connectionState: "offline", physicalSerial: identities[requestedSerial]?.serialNumber))
+            }
+            if let requestedSerial, let known = identities[requestedSerial] {
+                // Keep one remembered offline alternate visible without filling
+                // the picker with expired wireless ports from earlier sessions.
+                for (endpoint, identity) in identities.sorted(by: { $0.key < $1.key }) where identity.serialNumber == known.serialNumber {
+                    let alternate = AndroidDevice(serial: endpoint, model: known.serialNumber, connectionState: "offline",
+                                                  physicalSerial: known.serialNumber)
+                    if !devices.contains(where: { $0.physicalSerial == known.serialNumber && $0.isWireless == alternate.isWireless }) {
+                        devices.append(alternate)
+                    }
+                }
             }
             let selected: AndroidDevice?
-            if let requestedSerial { selected = devices.first { $0.serial == requestedSerial } }
-            else { selected = devices.first(where: \.isConnected) ?? devices.first }
+            if let requestedSerial, let current = devices.first(where: { $0.serial == requestedSerial }) {
+                let samePhone = devices.filter { $0.physicalID == current.physicalID }
+                selected = DeviceConnectionPolicy.select(from: samePhone, current: requestedSerial, mode: connectionMode)
+            } else {
+                let first = devices.first(where: \.isConnected) ?? devices.first
+                selected = first.flatMap { first in
+                    DeviceConnectionPolicy.select(from: devices.filter { $0.physicalID == first.physicalID }, current: nil, mode: connectionMode)
+                }
+            }
+            if requestedSerial != nil {
+                _ = reconnectControl.allowsAttempt(connected: selected?.isConnected == true,
+                    now: ProcessInfo.processInfo.systemUptime)
+            }
             guard let device = selected else {
                 let wireless = requestedSerial.map(WirelessReconnectPolicy.isNetworkSerial) == true
                 onUpdate(DiscoverySnapshot(devices: devices, displays: [], selectedSerial: requestedSerial,
-                    error: wireless ? wirelessOfflineHint : nil, replacingSerial: replacementSerial, reconnectStatus: reconnectControl.status))
+                    error: connectionMode == .automatic ? (wireless ? wirelessOfflineHint : nil) : "所选连接方式不可用，正在等待连接。",
+                    replacingSerial: replacementSerial, reconnectStatus: reconnectControl.status, transportAvailable: false))
                 reconnectWirelessDevice(devices: devices)
                 return
             }
             // Keep the first chosen device across unplug/replug; never silently
             // switch to another person's phone when the current one disappears.
-            if requestedSerial == nil { requestedSerial = device.serial }
+            if let previous = requestedSerial, previous != device.serial {
+                replacementSerial = previous
+                identityAttemptedFor = nil
+            }
+            requestedSerial = device.serial
             guard device.isConnected else {
                 let hint = device.connectionState == "unauthorized" ? "请在手机上允许这台电脑进行 adb 调试。" :
                     (WirelessReconnectPolicy.isNetworkSerial(device.serial) ? wirelessOfflineHint : "设备离线，请检查 USB 连接。")
@@ -128,7 +170,7 @@ public final class DisplayMonitor {
             }
             do {
                 let dump = try CommandRunner.checked(executable: dependencies.adbURL, arguments: ["-s", device.serial, "shell", "dumpsys", "display"], timeout: 5)
-                let displays = DisplayParser.parse(dump, serial: device.serial)
+                let displays = DisplayParser.parse(dump, serial: device.serial).map { $0.identified(as: device.physicalID) }
                 onUpdate(DiscoverySnapshot(devices: devices, displays: displays, selectedSerial: device.serial, error: displays.isEmpty ? "暂时读不到设备屏幕，正在重试。" : nil, replacingSerial: replacementSerial, reconnectStatus: reconnectControl.status))
             } catch {
                 onUpdate(DiscoverySnapshot(devices: devices, displays: [], selectedSerial: device.serial, error: error.localizedDescription, replacingSerial: replacementSerial, reconnectStatus: reconnectControl.status))
@@ -138,8 +180,46 @@ public final class DisplayMonitor {
         }
     }
 
+    private func identify(_ devices: [AndroidDevice]) -> [AndroidDevice] {
+        var changed = false
+        let online = Set(devices.filter(\.isConnected).map(\.serial))
+        verifiedOnline = verifiedOnline.filter { online.contains($0.key) }
+        for device in devices where verifiedTransportIDs[device.serial] != device.transportID {
+            verifiedOnline.removeValue(forKey: device.serial)
+        }
+        identityMismatches = identityMismatches.intersection(online)
+        for device in devices where device.isConnected && verifiedOnline[device.serial] == nil {
+            guard let hardware = try? CommandRunner.checked(executable: dependencies.adbURL,
+                arguments: ["-s", device.serial, "shell", "getprop", "ro.serialno"], timeout: 2)
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+                !["unknown", "null"].contains(hardware.lowercased()),
+                let identity = WirelessDeviceIdentity(serialNumber: hardware) else { continue }
+            // A reused wireless address must not inherit the old phone's identity.
+            if device.serial == requestedSerial, let known = identities[device.serial], known.serialNumber != hardware {
+                identityMismatches.insert(device.serial)
+                continue
+            }
+            identityMismatches.remove(device.serial)
+            let remembered = identities[device.serial].flatMap { $0.serialNumber == hardware ? $0 : nil } ?? identity
+            verifiedOnline[device.serial] = remembered
+            verifiedTransportIDs[device.serial] = device.transportID
+            changed = changed || identities[device.serial] != remembered
+            identities[device.serial] = remembered
+        }
+        if changed { saveIdentities() }
+        return devices.map { device in
+            if identityMismatches.contains(device.serial) {
+                return AndroidDevice(serial: device.serial, model: device.model, connectionState: "identity-mismatch",
+                                     physicalSerial: identities[device.serial]?.serialNumber, transportID: device.transportID)
+            }
+            let identity = device.isConnected ? verifiedOnline[device.serial] : identities[device.serial]
+            return AndroidDevice(serial: device.serial, model: device.model, connectionState: device.connectionState,
+                                 physicalSerial: identity?.serialNumber, transportID: device.transportID)
+        }
+    }
+
     private func reconnectWirelessDevice(devices: [AndroidDevice]) {
-        guard reconnectControl.status == .automatic else { return }
+        guard connectionMode != .usb, reconnectControl.status == .automatic else { return }
         if let requestedSerial, !devices.contains(where: { $0.serial == requestedSerial && $0.isConnected }) {
             identityAttemptedFor = nil
             identityVerificationError = nil
@@ -184,8 +264,9 @@ public final class DisplayMonitor {
     }
 
     private func discoverWirelessDevice(devices: [AndroidDevice]) {
-        guard let endpoint = requestedSerial, WirelessReconnectPolicy.isNetworkSerial(endpoint),
-              !devices.contains(where: { $0.serial == endpoint && $0.connectionState != "offline" }),
+        guard connectionMode != .usb, let endpoint = requestedSerial,
+              (connectionMode == .wireless && !WirelessReconnectPolicy.isNetworkSerial(endpoint)) ||
+                !devices.contains(where: { $0.serial == endpoint && $0.connectionState != "offline" }),
               let identity = identities[endpoint] else { return }
         let now = ProcessInfo.processInfo.systemUptime
         guard lastDiscoveryAt.map({ now - $0 >= 5 }) ?? true else { return }

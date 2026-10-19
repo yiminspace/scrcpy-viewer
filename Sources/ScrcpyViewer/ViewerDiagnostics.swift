@@ -133,6 +133,9 @@ final class ViewerDiagnostics {
                 "historyDisplayIDs": model.historyScreens.map { $0.display.displayID },
                 "visibleDisplayIDs": model.visibleScreens.map { $0.display.displayID },
                 "devices": model.devices.map { ["serial": $0.serial, "model": $0.model, "state": $0.connectionState] },
+                "physicalDeviceCount": model.physicalDevices.count,
+                "connectionMode": model.connectionMode.rawValue,
+                "connectionSummary": model.connectionSummary,
             ]
             if let serial = model.selectedSerial { state["selectedSerial"] = serial }
             if let view = mainInputView() {

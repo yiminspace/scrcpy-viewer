@@ -5,14 +5,21 @@ public struct AndroidDevice: Identifiable, Equatable, Sendable {
     public let serial: String
     public let model: String
     public let connectionState: String
+    public let physicalSerial: String?
+    public let transportID: String?
+    public var physicalID: String { physicalSerial.map { "device:\($0)" } ?? "transport:\(serial)" }
+    public var isWireless: Bool { WirelessReconnectPolicy.isNetworkSerial(serial) || serial.contains("._tcp") }
     public var isConnected: Bool { connectionState == "device" }
-    public init(serial: String, model: String, connectionState: String) {
+    public init(serial: String, model: String, connectionState: String, physicalSerial: String? = nil, transportID: String? = nil) {
         self.serial = serial; self.model = model; self.connectionState = connectionState
+        self.physicalSerial = physicalSerial
+        self.transportID = transportID
     }
 }
 
 public struct AndroidDisplay: Identifiable, Equatable, Sendable {
-    public var id: String { "\(serial):\(displayID):\(uniqueID)" }
+    public var id: String { "\(deviceIdentity ?? serial):\(displayID):\(uniqueID)" }
+    public let deviceIdentity: String?
     public let serial: String
     public let displayID: Int
     public let name: String
@@ -25,10 +32,16 @@ public struct AndroidDisplay: Identifiable, Equatable, Sendable {
     public var isActive: Bool { state == "ON" }
     public var isCaptureMirror: Bool { name.lowercased().hasPrefix("scrcpy") && owner == "com.android.shell" }
     public var title: String { isMain ? "主屏" : "副屏 \(displayID)" }
-    public init(serial: String, displayID: Int, name: String, uniqueID: String, owner: String, width: Int, height: Int, state: String) {
+    public init(serial: String, displayID: Int, name: String, uniqueID: String, owner: String, width: Int, height: Int, state: String, deviceIdentity: String? = nil) {
         self.serial = serial; self.displayID = displayID; self.name = name
         self.uniqueID = uniqueID; self.owner = owner; self.width = width
         self.height = height; self.state = state
+        self.deviceIdentity = deviceIdentity
+    }
+
+    public func identified(as identity: String) -> AndroidDisplay {
+        AndroidDisplay(serial: serial, displayID: displayID, name: name, uniqueID: uniqueID,
+                       owner: owner, width: width, height: height, state: state, deviceIdentity: identity)
     }
 }
 
@@ -39,10 +52,12 @@ public struct DiscoverySnapshot: Sendable {
     public let error: String?
     public let replacingSerial: String?
     public let reconnectStatus: WirelessReconnectStatus
-    public init(devices: [AndroidDevice], displays: [AndroidDisplay], selectedSerial: String?, error: String? = nil, replacingSerial: String? = nil, reconnectStatus: WirelessReconnectStatus = .automatic) {
+    public let transportAvailable: Bool
+    public init(devices: [AndroidDevice], displays: [AndroidDisplay], selectedSerial: String?, error: String? = nil, replacingSerial: String? = nil, reconnectStatus: WirelessReconnectStatus = .automatic, transportAvailable: Bool = true) {
         self.devices = devices; self.displays = displays; self.selectedSerial = selectedSerial; self.error = error
         self.replacingSerial = replacingSerial
         self.reconnectStatus = reconnectStatus
+        self.transportAvailable = transportAvailable
     }
 }
 
