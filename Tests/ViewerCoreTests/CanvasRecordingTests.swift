@@ -133,6 +133,7 @@ final class CanvasRecordingTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: directory) }
         let output = directory.appendingPathComponent("invalid.mp4")
         for configuration in [CanvasRecordingConfiguration(width: 1279),
+                              CanvasRecordingConfiguration(width: 8192, height: 8192),
                               CanvasRecordingConfiguration(framesPerSecond: 0),
                               CanvasRecordingConfiguration(bitRate: 0)] {
             XCTAssertThrowsError(try CanvasRecorder(outputURL: output, configuration: configuration))

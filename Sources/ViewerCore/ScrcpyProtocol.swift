@@ -9,6 +9,12 @@ enum ScrcpyProtocolError: LocalizedError {
 
 enum ScrcpyProtocol {
     static let maximumPacketSize = 16 * 1024 * 1024
+    // Bound decoded allocations as well as compressed packet sizes. A tiny SPS
+    // can otherwise request a huge pixel buffer before any frame reaches the UI.
+    static func allowsFrame(width: Int, height: Int) -> Bool {
+        (1...8192).contains(width) && (1...8192).contains(height)
+            && width <= 16_777_216 / height
+    }
     static let h264Codec: UInt32 = 0x68323634
 
     struct VideoHeader: Equatable {
@@ -30,7 +36,7 @@ enum ScrcpyProtocol {
             throw ScrcpyProtocolError.malformed("设备未返回 H.264 视频")
         }
         let width = Int(uint32(bytes, 4)), height = Int(uint32(bytes, 8))
-        guard (1...16384).contains(width), (1...16384).contains(height) else {
+        guard allowsFrame(width: width, height: height) else {
             throw ScrcpyProtocolError.malformed("设备返回了无效的视频尺寸")
         }
         return VideoHeader(width: width, height: height)
@@ -51,37 +57,42 @@ enum ScrcpyProtocol {
 
     /// MediaCodec produces Annex-B H.264; a packet may contain several NAL units.
     static func nalUnits(_ data: Data) throws -> [Data] {
-        let bytes = Array(data)
-        var boundaries: [(start: Int, payload: Int)] = []
-        var index = 0
-        while index + 2 < bytes.count {
-            if bytes[index] == 0, bytes[index + 1] == 0 {
-                if bytes[index + 2] == 1 {
-                    boundaries.append((index, index + 3)); index += 3; continue
+        try data.withUnsafeBytes { raw in
+            let bytes = raw.bindMemory(to: UInt8.self)
+            var boundaries: [(start: Int, payload: Int)] = []
+            var index = 0
+            while index + 2 < bytes.count {
+                if bytes[index] == 0, bytes[index + 1] == 0 {
+                    if bytes[index + 2] == 1 {
+                        guard boundaries.count < 4096 else { throw ScrcpyProtocolError.malformed("H.264 NAL 数量超出允许范围") }
+                        boundaries.append((index, index + 3)); index += 3; continue
+                    }
+                    if index + 3 < bytes.count, bytes[index + 2] == 0, bytes[index + 3] == 1 {
+                        guard boundaries.count < 4096 else { throw ScrcpyProtocolError.malformed("H.264 NAL 数量超出允许范围") }
+                        boundaries.append((index, index + 4)); index += 4; continue
+                    }
                 }
-                if index + 3 < bytes.count, bytes[index + 2] == 0, bytes[index + 3] == 1 {
-                    boundaries.append((index, index + 4)); index += 4; continue
+                index += 1
+            }
+            guard let first = boundaries.first,
+                  bytes[..<first.start].allSatisfy({ $0 == 0 }) else {
+                throw ScrcpyProtocolError.malformed("H.264 视频缺少 Annex-B 起始码")
+            }
+            var result: [Data] = []
+            for (offset, boundary) in boundaries.enumerated() {
+                let end = offset + 1 < boundaries.count ? boundaries[offset + 1].start : bytes.count
+                guard boundary.payload < end else {
+                    throw ScrcpyProtocolError.malformed("H.264 视频包含空 NAL")
                 }
+                result.append(Data(bytes[boundary.payload..<end]))
             }
-            index += 1
+            return result
         }
-        guard let first = boundaries.first,
-              bytes[..<first.start].allSatisfy({ $0 == 0 }) else {
-            throw ScrcpyProtocolError.malformed("H.264 视频缺少 Annex-B 起始码")
-        }
-        var result: [Data] = []
-        for (offset, boundary) in boundaries.enumerated() {
-            let end = offset + 1 < boundaries.count ? boundaries[offset + 1].start : bytes.count
-            guard boundary.payload < end else {
-                throw ScrcpyProtocolError.malformed("H.264 视频包含空 NAL")
-            }
-            result.append(Data(bytes[boundary.payload..<end]))
-        }
-        return result
     }
 
     static func lengthPrefixed(_ units: [Data]) -> Data {
         var result = Data()
+        result.reserveCapacity(units.reduce(0) { $0 + $1.count + 4 })
         for unit in units {
             let size = UInt32(unit.count)
             result.append(contentsOf: [UInt8((size >> 24) & 255), UInt8((size >> 16) & 255),

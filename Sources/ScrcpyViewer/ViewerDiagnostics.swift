@@ -307,7 +307,7 @@ final class ViewerDiagnostics {
         try? Self.writePNG(composite, to: directory.appendingPathComponent("window.png"))
     }
 
-    static func writePNG(_ image: CGImage, to url: URL) throws {
+    nonisolated static func writePNG(_ image: CGImage, to url: URL) throws {
         guard let data = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) else {
             throw NSError(domain: "ScrcpyViewer", code: 1, userInfo: [NSLocalizedDescriptionKey: "无法编码 PNG 图片。"])
         }

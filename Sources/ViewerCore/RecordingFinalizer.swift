@@ -127,7 +127,9 @@ public enum RecordingFinalizer {
                 throw writer.error ?? reader.error ?? CanvasRecordingError.encoding("无法开始合并录屏")
             }
             writer.startSession(atSourceTime: .zero)
-            while let sample = output.copyNextSampleBuffer() {
+            // An async export can run for hours without returning to a dispatch
+            // autorelease boundary. Keep AVFoundation temporaries frame-scoped.
+            while let sample = autoreleasepool(invoking: { output.copyNextSampleBuffer() }) {
                 let waitingSince = ProcessInfo.processInfo.systemUptime
                 while !input.isReadyForMoreMediaData {
                     try Task.checkCancellation()
@@ -140,7 +142,7 @@ public enum RecordingFinalizer {
                     try await Task.sleep(for: .milliseconds(20))
                 }
                 try Task.checkCancellation()
-                guard input.append(sample) else {
+                guard autoreleasepool(invoking: { input.append(sample) }) else {
                     throw writer.error ?? CanvasRecordingError.encoding("无法写入合并画面")
                 }
             }

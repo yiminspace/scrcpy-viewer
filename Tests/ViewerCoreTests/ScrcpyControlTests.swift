@@ -42,6 +42,9 @@ final class ScrcpyControlTests: XCTestCase {
         XCTAssertNotNil(ScrcpyControlProtocol.text(String(repeating: "a", count: 300)))
         XCTAssertNil(ScrcpyControlProtocol.text(String(repeating: "中", count: 101)))
         XCTAssertNil(ScrcpyControlProtocol.clipboard(String(repeating: "a", count: 262131), paste: true, sequence: 1))
+        XCTAssertNotNil(ScrcpyControlProtocol.clipboard(String(repeating: "a", count: 262130), paste: true, sequence: 1))
+        XCTAssertNil(ScrcpyControlProtocol.text(String(repeating: "a", count: 1_000_000)))
+        XCTAssertNil(ScrcpyControlProtocol.clipboard(String(repeating: "中", count: 1_000_000), paste: true, sequence: 1))
     }
 
     func testSecondaryDisplaysNeverExposeInputAndNeverStartedStopCompletes() {
@@ -101,6 +104,25 @@ final class ScrcpyControlTests: XCTestCase {
         XCTAssertEqual(Array(released[10..<22]), [0, 0, 0, 20, 0, 0, 0, 40, 0, 200, 1, 144])
         wait(for: [finished], timeout: 2)
         XCTAssertFalse(channel.send(Data([8, 1])))
+    }
+
+    func testSlowPeerBoundsQueuedClipboardBytesAndStillAcceptsRelease() throws {
+        let pair = try makeSocketPair()
+        defer { Darwin.close(pair.1) }
+        var sendBuffer: Int32 = 4096
+        setsockopt(pair.0, SOL_SOCKET, SO_SNDBUF, &sendBuffer, socklen_t(MemoryLayout<Int32>.size))
+        let channel = ScrcpyControlChannel(fd: pair.0, onClipboard: { _ in }, onFailure: { _ in })
+        let payload = Data(repeating: 0, count: 256 * 1024)
+        let accepted = (0..<100).filter { _ in channel.send(payload) }.count
+        XCTAssertGreaterThan(accepted, 0)
+        // At most 2 MiB queued plus one 256 KiB write already in progress.
+        XCTAssertLessThanOrEqual(accepted, 9)
+        XCTAssertTrue(channel.send(ScrcpyControlProtocol.key(action: .up, keyCode: 29,
+            repeatCount: 0, metaState: 0), key: (.up, 29, 0)))
+        for _ in 0..<10_000 { channel.updateFrameSize(width: 1080, height: 2400) }
+        let stopped = expectation(description: "slow peer cleanup")
+        channel.stop { stopped.fulfill() }
+        wait(for: [stopped], timeout: 4)
     }
 
     private func makeSocketPair() throws -> (Int32, Int32) {

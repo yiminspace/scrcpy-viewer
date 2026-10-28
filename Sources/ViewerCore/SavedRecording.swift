@@ -95,3 +95,69 @@ public enum RecordingPreviewLoader {
         return RecordingPreview(image: generated.image, duration: duration)
     }
 }
+
+/// Shares previews across lazy row lifetimes, and avoids opening many video
+/// decoders at once when a large history first enters the scroll viewport.
+public actor RecordingPreviewCache {
+    public static let shared = RecordingPreviewCache()
+
+    private struct Key: Hashable {
+        let path: String
+        let date: Date
+        let size: Int64
+    }
+
+    private let capacity: Int
+    private let loader: (URL) async throws -> RecordingPreview
+    private var previews: [Key: RecordingPreview] = [:]
+    private var recency: [Key] = []
+    private var pending: [Key: Task<RecordingPreview, Error>] = [:]
+    private var tail: Task<Void, Never>?
+
+    public init(capacity: Int = 96,
+                loader: @escaping (URL) async throws -> RecordingPreview = RecordingPreviewLoader.load) {
+        self.capacity = max(1, capacity)
+        self.loader = loader
+    }
+
+    public func load(_ recording: SavedRecording) async throws -> RecordingPreview {
+        try Task.checkCancellation()
+        let key = Key(path: recording.id, date: recording.recordedAt, size: recording.fileSize)
+        if let preview = previews[key] {
+            touch(key)
+            return preview
+        }
+        if let task = pending[key] { return try await task.value }
+
+        let previous = tail
+        let loader = self.loader
+        // A row disappearing must not cancel a decode shared by another row or
+        // a subsequent appearance. The UI checks its own cancellation on return.
+        let task = Task {
+            await previous?.value
+            return try await loader(recording.url)
+        }
+        pending[key] = task
+        tail = Task { _ = await task.result }
+        do {
+            let preview = try await task.value
+            pending[key] = nil
+            previews[key] = preview
+            touch(key)
+            while recency.count > capacity {
+                previews.removeValue(forKey: recency.removeFirst())
+            }
+            if pending.isEmpty { tail = nil }
+            return preview
+        } catch {
+            pending[key] = nil
+            if pending.isEmpty { tail = nil }
+            throw error
+        }
+    }
+
+    private func touch(_ key: Key) {
+        recency.removeAll { $0 == key }
+        recency.append(key)
+    }
+}

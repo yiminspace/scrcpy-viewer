@@ -58,6 +58,7 @@ final class ViewerModel: ObservableObject {
     @Published private(set) var dependencyError: String?
     @Published private(set) var dependencies: ViewerDependencies?
     @Published var saveError: String?
+    @Published private(set) var isSavingScreenshot = false
     @Published private(set) var focusedScreenID: String?
     @Published private(set) var interactionError: String?
     @Published private(set) var isWakingMain = false
@@ -101,16 +102,20 @@ final class ViewerModel: ObservableObject {
     private var recordingLayoutKey = ""
     private var savedRecordingParts: [Int: URL] = [:]
     private var recordingHistoryGeneration = UUID()
+    private var recordingHistoryRefreshInProgress = false
+    private var recordingHistoryRefreshRequested = false
 
     private var monitor: DisplayMonitor?
     private var streams: [String: ScrcpyStream] = [:]
     private var retiringStreams: [UUID: ScrcpyStream] = [:]
+    private var streamRestartGate = StreamRestartGate()
     private var generations: [String: UUID] = [:]
     private var pendingClipboard: [String: UUID] = [:]
     private var selectedByDevice: [String: String] = [:]
     private var scenePolicy = DisplayScenePolicy()
     private var explicitlySelectedSerial: String?
     private var monitorGeneration = UUID()
+    private var isResolvingDependencies = false
     private var started = false
     private var isShuttingDown = false
     private var shutdownCompletions: [() -> Void] = []
@@ -166,7 +171,7 @@ final class ViewerModel: ObservableObject {
         !isShuttingDown && !isRecording && !isFinishingRecording && !recordingPanelIsOpen
             && currentScreens.contains { $0.frame != nil }
     }
-    var canSaveScreenshot: Bool { visibleScreens.contains { $0.frame != nil } }
+    var canSaveScreenshot: Bool { !isShuttingDown && !isSavingScreenshot && visibleScreens.contains { $0.frame != nil } }
 
     func start() {
         guard !started else { return }
@@ -359,10 +364,20 @@ final class ViewerModel: ObservableObject {
         panel.title = "保存全部屏幕截图"
         panel.message = "主屏和所有副屏紧贴排列，保存为一张 PNG。历史画面会标注时间。"
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        do {
-            let image = try CanvasComposition.image(screens: snapshot, maximumHeight: 2160, maximumWidth: 8192)
-            try ViewerDiagnostics.writePNG(image, to: url)
-        } catch { saveError = error.localizedDescription }
+        isSavingScreenshot = true
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let result = Result {
+                try autoreleasepool {
+                    let image = try CanvasComposition.image(screens: snapshot, maximumHeight: 2160, maximumWidth: 8192)
+                    try ViewerDiagnostics.writePNG(image, to: url)
+                }
+            }
+            DispatchQueue.main.async { [weak self] in
+                self?.isSavingScreenshot = false
+                if case .failure(let error) = result { self?.saveError = error.localizedDescription }
+                self?.completeShutdownIfReady()
+            }
+        }
     }
 
     func startRecording() {
@@ -577,14 +592,26 @@ final class ViewerModel: ObservableObject {
     func refreshRecordingHistory() {
         let generation = UUID()
         recordingHistoryGeneration = generation
+        guard !recordingHistoryRefreshInProgress else {
+            recordingHistoryRefreshRequested = true
+            return
+        }
+        recordingHistoryRefreshInProgress = true
         let known = (UserDefaults.standard.stringArray(forKey: "recordingHistoryPaths") ?? [])
             .map { URL(fileURLWithPath: $0) }
         let directory = recordingDirectory
         DispatchQueue.global(qos: .utility).async { [weak self] in
             let entries = RecordingHistoryCatalog.list(recordedURLs: known, directory: directory)
             DispatchQueue.main.async { [weak self] in
-                guard let self, self.recordingHistoryGeneration == generation else { return }
-                self.recordingHistory = entries
+                guard let self else { return }
+                self.recordingHistoryRefreshInProgress = false
+                if self.recordingHistoryGeneration == generation, self.recordingHistory != entries {
+                    self.recordingHistory = entries
+                }
+                if self.recordingHistoryRefreshRequested {
+                    self.recordingHistoryRefreshRequested = false
+                    self.refreshRecordingHistory()
+                }
             }
         }
     }
@@ -690,25 +717,36 @@ final class ViewerModel: ObservableObject {
     }
 
     private func configureMonitor() {
+        guard !isResolvingDependencies else { return }
+        isResolvingDependencies = true
         monitorGeneration = UUID()
         let generation = monitorGeneration
-        do {
-            let dependencies = try DependencyResolver.resolve()
-            self.dependencies = dependencies
-            dependencyError = nil
-            let monitor = DisplayMonitor(dependencies: dependencies) { [weak self] snapshot in
-                DispatchQueue.main.async {
-                    guard let self, self.monitorGeneration == generation else { return }
-                    self.apply(snapshot)
+        // Version probing may wait up to five seconds for a local subprocess.
+        // Hash validation and subprocess work must not freeze window startup.
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let result = Result { try DependencyResolver.resolve() }
+            DispatchQueue.main.async { [weak self] in
+                guard let self, !self.isShuttingDown, self.monitorGeneration == generation else { return }
+                self.isResolvingDependencies = false
+                switch result {
+                case .success(let dependencies):
+                    self.dependencies = dependencies
+                    self.dependencyError = nil
+                    let monitor = DisplayMonitor(dependencies: dependencies) { [weak self] snapshot in
+                        DispatchQueue.main.async {
+                            guard let self, self.monitorGeneration == generation else { return }
+                            self.apply(snapshot)
+                        }
+                    }
+                    self.monitor = monitor
+                    monitor.setConnectionMode(self.connectionMode)
+                    if let serial = self.selectedSerial { monitor.selectDevice(serial) }
+                    monitor.start()
+                case .failure(let error):
+                    self.dependencyError = error.localizedDescription
+                    self.diagnostics.write(model: self, force: true)
                 }
             }
-            self.monitor = monitor
-            monitor.setConnectionMode(connectionMode)
-            if let serial = selectedSerial { monitor.selectDevice(serial) }
-            monitor.start()
-        } catch {
-            dependencyError = error.localizedDescription
-            diagnostics.write(model: self, force: true)
         }
     }
 
@@ -818,6 +856,10 @@ final class ViewerModel: ObservableObject {
               let index = screens.firstIndex(where: { $0.id == id }),
               screens[index].presence == .active else { return }
         let display = screens[index].display
+        guard streamRestartGate.requestStart(for: id) else {
+            screens[index].state = .starting
+            return
+        }
         let generation = UUID()
         generations[id] = generation
         screens[index].state = .starting
@@ -832,12 +874,14 @@ final class ViewerModel: ObservableObject {
                           let self, self.generations[id] == generation,
                           let index = self.screens.firstIndex(where: { $0.id == id }),
                           self.screens[index].presence == .active else { return }
-                    self.screens[index].frame = latest.image
-                    self.screens[index].lastFrameAt = latest.receivedAt
-                    self.screens[index].receivedCurrentFrame = true
-                    self.screens[index].isSwitchingConnection = false
-                    self.screens[index].state = .streaming
-                    self.screens[index].controlReady = display.isMain && self.streams[id]?.isControlReady == true
+                    var screen = self.screens[index]
+                    screen.frame = latest.image
+                    screen.lastFrameAt = latest.receivedAt
+                    screen.receivedCurrentFrame = true
+                    screen.isSwitchingConnection = false
+                    screen.state = .streaming
+                    screen.controlReady = display.isMain && self.streams[id]?.isControlReady == true
+                    self.screens[index] = screen
                     self.reconcileAutoRecording()
                     self.diagnostics.write(model: self)
                 }
@@ -875,16 +919,19 @@ final class ViewerModel: ObservableObject {
     }
 
     private func stopStream(_ id: String) {
+        streamRestartGate.cancelStart(for: id)
         if focusedScreenID == id { clearInputFocus() }
         pendingClipboard.removeValue(forKey: id)
         generations.removeValue(forKey: id)
         if let stream = streams.removeValue(forKey: id) {
             let retirementID = UUID()
             retiringStreams[retirementID] = stream
+            streamRestartGate.beginRetirement(for: id)
             stream.stop { [weak self] in
                 DispatchQueue.main.async {
                     guard let self else { return }
                     self.retiringStreams.removeValue(forKey: retirementID)
+                    if self.streamRestartGate.didRetire(id) { self.startStream(for: id) }
                     self.completeShutdownIfReady()
                 }
             }
@@ -897,6 +944,7 @@ final class ViewerModel: ObservableObject {
     }
 
     private func stopAllStreams() {
+        streamRestartGate.cancelPendingStarts()
         generations.removeAll()
         for id in Array(streams.keys) { stopStream(id) }
         for index in screens.indices {
@@ -908,7 +956,7 @@ final class ViewerModel: ObservableObject {
 
     private func completeShutdownIfReady() {
         guard isShuttingDown, streams.isEmpty, retiringStreams.isEmpty,
-              !isRecording, !isFinishingRecording else { return }
+              !isRecording, !isFinishingRecording, !isSavingScreenshot else { return }
         let completions = shutdownCompletions
         shutdownCompletions.removeAll()
         guard !completions.isEmpty else { return }

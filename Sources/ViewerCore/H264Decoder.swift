@@ -67,6 +67,10 @@ final class H264Decoder {
         status = VTDecompressionSessionDecodeFrame(session, sampleBuffer: sample,
             flags: [._EnableAsynchronousDecompression], frameRefcon: nil, infoFlagsOut: nil)
         guard status == noErr else { throw failure("提交视频解码失败", status) }
+        // Backpressure belongs on the socket worker, before compressed frames
+        // accumulate inside VideoToolbox. Never drop H.264 reference packets.
+        let completion = VTDecompressionSessionWaitForAsynchronousFrames(session)
+        guard completion == noErr else { throw failure("等待视频解码失败", completion) }
     }
 
     func close() {
@@ -91,6 +95,10 @@ final class H264Decoder {
             }
         }
         guard status == noErr, let newFormat else { throw failure("解析 H.264 参数失败", status) }
+        let dimensions = CMVideoFormatDescriptionGetDimensions(newFormat)
+        guard ScrcpyProtocol.allowsFrame(width: Int(dimensions.width), height: Int(dimensions.height)) else {
+            throw ScrcpyProtocolError.malformed("视频尺寸超出内存安全范围")
+        }
         var callback = VTDecompressionOutputCallbackRecord(decompressionOutputCallback: { context, _, status, _, buffer, _, _ in
             guard let context else { return }
             let decoder = Unmanaged<H264Decoder>.fromOpaque(context).takeUnretainedValue()
