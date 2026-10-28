@@ -2,7 +2,7 @@ import AVFoundation
 import CoreGraphics
 import Foundation
 
-public struct RecordingScreen {
+public struct RecordingScreen: Sendable {
     public let id: String
     public let title: String
     public let image: CGImage?
