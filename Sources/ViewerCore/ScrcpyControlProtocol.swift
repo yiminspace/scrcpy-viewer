@@ -48,14 +48,15 @@ enum ScrcpyControlProtocol {
     }
 
     static func text(_ text: String) -> Data? {
-        let utf8 = Data(text.utf8)
+        let utf8 = Data(text.utf8.prefix(301))
         guard !utf8.isEmpty, utf8.count <= 300 else { return nil }
         var data = Data([1]); append(UInt64(utf8.count), bytes: 4, to: &data); data.append(utf8)
         return data
     }
 
     static func clipboard(_ text: String, paste: Bool, sequence: UInt64) -> Data? {
-        let utf8 = Data(text.utf8)
+        // Reject oversized paste without first copying the entire clipboard.
+        let utf8 = Data(text.utf8.prefix(maximumMessageSize - 14 + 1))
         guard utf8.count <= maximumMessageSize - 14 else { return nil }
         var data = Data([9]); append(sequence, bytes: 8, to: &data)
         data.append(paste ? 1 : 0); append(UInt64(utf8.count), bytes: 4, to: &data); data.append(utf8)

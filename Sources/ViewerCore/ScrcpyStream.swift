@@ -10,8 +10,8 @@ public final class ScrcpyStream {
     private let onFrame: (CGImage) -> Void
     private let onState: (StreamState) -> Void
     private let onClipboard: (String) -> Void
-    private let worker = DispatchQueue(label: "viewer.scrcpy.worker", qos: .userInitiated)
-    private let callbacks = DispatchQueue(label: "viewer.scrcpy.callbacks", qos: .userInitiated)
+    private let worker = DispatchQueue(label: "viewer.scrcpy.worker", qos: .userInitiated, autoreleaseFrequency: .workItem)
+    private let callbacks = DispatchQueue(label: "viewer.scrcpy.callbacks", qos: .userInitiated, autoreleaseFrequency: .workItem)
     private let lifecycle = DispatchGroup()
     private let lock = NSLock()
     private var started = false
@@ -176,11 +176,15 @@ public final class ScrcpyStream {
             let decoder = H264Decoder { [weak self] image in self?.receivedFrame(image) }
             defer { decoder.close() }
             while !isCancelled {
-                let header = try ScrcpyProtocol.packetHeader(readExactly(12, from: fd,
-                    initialFrameDeadline: initialFrameDeadline))
-                let payload = try readExactly(header.length, from: fd,
-                    initialFrameDeadline: initialFrameDeadline)
-                try decoder.decode(payload, header: header)
+                // run() is one long-lived dispatch work item. Drain Objective-C
+                // temporaries per packet, rather than only when the stream ends.
+                try autoreleasepool {
+                    let header = try ScrcpyProtocol.packetHeader(readExactly(12, from: fd,
+                        initialFrameDeadline: initialFrameDeadline))
+                    let payload = try readExactly(header.length, from: fd,
+                        initialFrameDeadline: initialFrameDeadline)
+                    try decoder.decode(payload, header: header)
+                }
             }
         } catch is CancellationError {
             // stop() already published the user-visible terminal state.

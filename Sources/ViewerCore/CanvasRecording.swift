@@ -2,7 +2,7 @@ import AVFoundation
 import CoreGraphics
 import Foundation
 
-public struct RecordingScreen {
+public struct RecordingScreen: Sendable {
     public let id: String
     public let title: String
     public let image: CGImage?
@@ -79,7 +79,8 @@ public final class CanvasRecorder {
     private let input: AVAssetWriterInput
     private let adaptor: AVAssetWriterInputPixelBufferAdaptor
     private let onFailure: ((Error) -> Void)?
-    private let queue = DispatchQueue(label: "scrcpy-viewer.canvas-recording", qos: .utility)
+    private let queue = DispatchQueue(label: "scrcpy-viewer.canvas-recording", qos: .utility,
+                                      autoreleaseFrequency: .workItem)
     private let lock = NSLock()
     // Access these state fields only under lock.
     private var pending: Snapshot?
@@ -102,6 +103,7 @@ public final class CanvasRecorder {
                 onFailure: ((Error) -> Void)? = nil) throws {
         guard outputURL.isFileURL, configuration.width >= 64, configuration.width <= 8192,
               configuration.height >= 64, configuration.height <= 8192,
+              configuration.width <= 16_777_216 / configuration.height,
               configuration.width.isMultiple(of: 2), configuration.height.isMultiple(of: 2),
               (1...60).contains(configuration.framesPerSecond), configuration.bitRate > 0 else {
             throw CanvasRecordingError.invalidConfiguration

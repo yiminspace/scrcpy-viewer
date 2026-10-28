@@ -30,6 +30,24 @@ final class ScrcpyProtocolTests: XCTestCase {
         XCTAssertThrowsError(try ScrcpyProtocol.videoHeader(invalid))
     }
 
+    func testDecodedPixelBudgetRejectsHugeFramesIncludingResolutionChanges() {
+        XCTAssertTrue(ScrcpyProtocol.allowsFrame(width: 3840, height: 2160))
+        XCTAssertTrue(ScrcpyProtocol.allowsFrame(width: 2160, height: 3840))
+        for (width, height) in [(8192, 8192), (16384, 1), (0, 1), (1, 0), (1, -1), (Int.max, Int.max)] {
+            XCTAssertFalse(ScrcpyProtocol.allowsFrame(width: width, height: height))
+        }
+        XCTAssertThrowsError(try ScrcpyProtocol.videoHeader(Data([
+            0x68, 0x32, 0x36, 0x34, 0, 0, 0x20, 0, 0, 0, 0x20, 0,
+        ])))
+    }
+
+    func testNALFloodIsRejectedBeforeAllocatingMillionsOfUnits() {
+        let unit = Data([0, 0, 1, 0x65])
+        var packet = Data()
+        for _ in 0..<4097 { packet.append(unit) }
+        XCTAssertThrowsError(try ScrcpyProtocol.nalUnits(packet))
+    }
+
     func testAnnexBPreservesSeveralNALsWithMixedStartCodeLengths() throws {
         let input = Data([0, 0, 0, 1, 0x67, 0x64, 0, 0, 1, 0x68, 0x22,
                           0, 0, 0, 1, 0x65, 0, 0, 3, 1, 0x33])

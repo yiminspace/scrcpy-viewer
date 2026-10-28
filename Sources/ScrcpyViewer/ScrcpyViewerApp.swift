@@ -177,6 +177,7 @@ private struct ViewerWindow: View {
                                          refresh: model.refreshRecordingHistory,
                                          select: playRecording,
                                          trash: trashRecording)
+                        .equatable()
                 }
                 .padding(.horizontal, 8)
             }

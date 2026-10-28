@@ -2,13 +2,19 @@ import AppKit
 import SwiftUI
 import ViewerCore
 
-struct RecordingHistoryView: View {
+struct RecordingHistoryView: View, Equatable {
     let recordings: [SavedRecording]
     let refresh: () -> Void
     let select: (SavedRecording) -> Void
     let trash: (SavedRecording) -> Void
     @State private var expanded = true
     @State private var recordingToTrash: SavedRecording?
+
+    // Live screen frames invalidate the parent many times per second. History
+    // actions belong to the same window; only catalog changes affect this view.
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.recordings == rhs.recordings
+    }
 
     private var recordingDays: [(date: Date, recordings: [SavedRecording])] {
         let calendar = Calendar.current
@@ -158,11 +164,14 @@ private struct SavedRecordingRow: View {
         .background(isHovered ? Color.primary.opacity(0.06) : Color.clear,
                     in: RoundedRectangle(cornerRadius: 6))
         .onHover { isHovered = $0 }
+        // Lazy stacks can retain row state after it leaves the viewport. Keep
+        // offscreen images only in the bounded shared cache.
+        .onDisappear { preview = nil }
         .task(id: "\(recording.id):\(recording.recordedAt.timeIntervalSince1970):\(recording.fileSize)") {
             preview = nil
             previewUnavailable = false
             do {
-                let loaded = try await RecordingPreviewLoader.load(url: recording.url)
+                let loaded = try await RecordingPreviewCache.shared.load(recording)
                 try Task.checkCancellation()
                 preview = loaded
             } catch is CancellationError {

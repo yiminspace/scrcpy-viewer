@@ -12,10 +12,13 @@ final class ScrcpyControlChannel {
     private var closing = false
     private var failed = false
     private var pendingMessages = 0
+    private var pendingBytes = 0
+    private let maximumPendingBytes = 2 * 1024 * 1024
     private var sequence: UInt64 = 0
     // The following gesture state is confined to the writer queue.
     private var touch: ScrcpyControlProtocol.Touch?
     private var pressedKeys: [UInt32: UInt32] = [:]
+    // Resolution is latest-only state protected by lock, independent of a slow writer.
     private var frameSize: (Int, Int)?
     private let onClipboard: (String) -> Void
     private let onFailure: (String) -> Void
@@ -38,7 +41,7 @@ final class ScrcpyControlChannel {
     var isReady: Bool { lock.lock(); defer { lock.unlock() }; return !closing && !failed }
 
     func updateFrameSize(width: Int, height: Int) {
-        writer.async { self.frameSize = (width, height) }
+        lock.lock(); frameSize = (width, height); lock.unlock()
     }
 
     @discardableResult
@@ -47,11 +50,19 @@ final class ScrcpyControlChannel {
         lock.lock()
         // Never discard a release because a slow device has filled the ordinary input queue.
         let isRelease = touch?.action == .up || touch?.action == .cancel || key?.0 == .up
-        guard !closing, !failed, pendingMessages < 512 || isRelease else { lock.unlock(); return false }
+        guard !closing, !failed,
+              isRelease || (pendingMessages < 512 && data.count <= maximumPendingBytes - pendingBytes) else {
+            lock.unlock(); return false
+        }
         pendingMessages += 1
+        pendingBytes += data.count
         // Enqueue while locked so stop's writer barrier cannot overtake an accepted message.
         writer.async {
-            self.lock.lock(); self.pendingMessages -= 1; let skip = self.closing || self.failed; self.lock.unlock()
+            self.lock.lock()
+            self.pendingMessages -= 1
+            self.pendingBytes -= data.count
+            let skip = self.closing || self.failed
+            self.lock.unlock()
             guard !skip else { return }
             do {
                 try self.write(data, deadline: Date().addingTimeInterval(2))
@@ -90,7 +101,7 @@ final class ScrcpyControlChannel {
                 // Best effort and bounded: release inputs before closing the server's control channel.
                 let deadline = Date().addingTimeInterval(0.5)
                 if let touch = self.touch {
-                    let size = self.frameSize ?? (touch.width, touch.height)
+                    self.lock.lock(); let size = self.frameSize ?? (touch.width, touch.height); self.lock.unlock()
                     let x = min(size.0 - 1, touch.x * size.0 / touch.width)
                     let y = min(size.1 - 1, touch.y * size.1 / touch.height)
                     for action in [ScrcpyTouchAction.cancel, .up] {
