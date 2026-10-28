@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.10.1 (2026-10-28)
+
+### Bug Fixes
+
+- 声明跨队列录屏快照的 Sendable 契约 ([#11](https://github.com/yiminspace/scrcpy-viewer/pull/11),
+  [`9340db8`](https://github.com/yiminspace/scrcpy-viewer/commit/9340db8a287136c109b47060f4dd8d71cce564a3))
+
+### Performance Improvements
+
+- 降低录屏历史滚动及实时显示的卡顿与内存积压 ([#11](https://github.com/yiminspace/scrcpy-viewer/pull/11),
+  [`9340db8`](https://github.com/yiminspace/scrcpy-viewer/commit/9340db8a287136c109b47060f4dd8d71cce564a3))
+
+
 ## v0.10.0 (2026-10-19)
 
 ### Features
