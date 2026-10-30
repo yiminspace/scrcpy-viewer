@@ -54,12 +54,13 @@ wireless_main() {
     while :; do
         wireless_start=$(date '+%m-%d %H:%M:%S.000')
         logcat -b system -v epoch -T "$wireless_start" -s 'AdbDebuggingManager:I' '*:S' |
-        while IFS= read -r wireless_line; do
+        # Android pads epoch timestamps with spaces. Default IFS trims that
+        # padding before extracting the timestamp and remaining message.
+        while read -r wireless_event wireless_line; do
             case "$wireless_line" in
                 *'Network disconnected. Disabling adbwifi.') ;;
                 *) continue ;;
             esac
-            wireless_event=${wireless_line%% *}
             wireless_event=${wireless_event%%.*}
             case "$wireless_event" in ''|*[!0-9]*) continue ;; esac
             wireless_now=$(date +%s)

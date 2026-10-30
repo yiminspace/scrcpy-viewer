@@ -40,6 +40,7 @@ logcat() {
     touch "$fixture_dir/disconnected"
     case "$event" in
         network) printf '%s 1000 1000 I AdbDebuggingManager: Network disconnected. Disabling adbwifi.\n' "$(date +%s).100" ;;
+        padded) printf '         %s 1000 1000 I AdbDebuggingManager: Network disconnected. Disabling adbwifi.\n' "$(date +%s).100" ;;
         stale) echo '1.000 1000 1000 I AdbDebuggingManager: Network disconnected. Disabling adbwifi.' ;;
         manual) echo '1.000 1000 1000 I AdbDebuggingManager: Other event' ;;
     esac
@@ -65,6 +66,12 @@ wireless_main
     def test_manual_disable_is_not_reversed(self):
         _, events = self.run_scenario(event="manual")
         self.assertEqual(events.splitlines().count("enable"), 1)
+
+    def test_android_padded_timestamp_recovers(self):
+        result, events = self.run_scenario(event="padded")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(events.splitlines().count("enable"), 2)
+        self.assertIn("Wi-Fi address restored", events)
 
     def test_old_events_do_not_reverse_later_manual_disable(self):
         _, events = self.run_scenario(event="stale")
