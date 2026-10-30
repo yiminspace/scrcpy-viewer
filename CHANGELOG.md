@@ -2,6 +2,18 @@
 
 <!-- version list -->
 
+## v0.10.2 (2026-10-30)
+
+### Bug Fixes
+
+- Handle padded wireless debugging log timestamps
+  ([#12](https://github.com/yiminspace/scrcpy-viewer/pull/12),
+  [`3e883b5`](https://github.com/yiminspace/scrcpy-viewer/commit/3e883b5ae7bd8cee666062deac4d96aa4e9fa5d8))
+
+- 修复无线调试断网事件时间戳解析 ([#12](https://github.com/yiminspace/scrcpy-viewer/pull/12),
+  [`3e883b5`](https://github.com/yiminspace/scrcpy-viewer/commit/3e883b5ae7bd8cee666062deac4d96aa4e9fa5d8))
+
+
 ## v0.10.1 (2026-10-28)
 
 ### Bug Fixes
