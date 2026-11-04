@@ -521,6 +521,9 @@ final class ViewerModel: ObservableObject {
             preserveUnfinishedRecording()
         }
         recordingSessionDirectory = nil
+        // Only an active recording/publication owns a protected destination.
+        // The finalized file must age out even if this app stays open and idle.
+        recordingBaseURL = nil
         savedRecordingParts = [:]
         recordingPublicationInProgress = false
         isFinishingRecording = false
