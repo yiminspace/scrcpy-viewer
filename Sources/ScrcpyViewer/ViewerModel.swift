@@ -101,6 +101,8 @@ final class ViewerModel: ObservableObject {
     private var recordingPartStartedAt: TimeInterval = 0
     private var recordingLayoutKey = ""
     private var savedRecordingParts: [Int: URL] = [:]
+    private var recordingRetentionTimer: Timer?
+    @Published private(set) var recordingRetentionError: String?
     private var recordingHistoryGeneration = UUID()
     private var recordingHistoryRefreshInProgress = false
     private var recordingHistoryRefreshRequested = false
@@ -177,6 +179,9 @@ final class ViewerModel: ObservableObject {
         guard !started else { return }
         started = true
         refreshRecordingHistory()
+        recordingRetentionTimer = Timer.scheduledTimer(withTimeInterval: 3_600, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshRecordingHistory() }
+        }
         configureMonitor()
         diagnostics.start(model: self)
     }
@@ -185,6 +190,8 @@ final class ViewerModel: ObservableObject {
         shutdownCompletions.append(completion)
         guard !isShuttingDown else { completeShutdownIfReady(); return }
         isShuttingDown = true
+        recordingRetentionTimer?.invalidate()
+        recordingRetentionTimer = nil
         diagnostics.recordLifecycle("shutdown_started")
         stopRecording(suppressAutomaticRestart: false)
         monitorGeneration = UUID()
@@ -514,6 +521,9 @@ final class ViewerModel: ObservableObject {
             preserveUnfinishedRecording()
         }
         recordingSessionDirectory = nil
+        // Only an active recording/publication owns a protected destination.
+        // The finalized file must age out even if this app stays open and idle.
+        recordingBaseURL = nil
         savedRecordingParts = [:]
         recordingPublicationInProgress = false
         isFinishingRecording = false
@@ -600,11 +610,27 @@ final class ViewerModel: ObservableObject {
         let known = (UserDefaults.standard.stringArray(forKey: "recordingHistoryPaths") ?? [])
             .map { URL(fileURLWithPath: $0) }
         let directory = recordingDirectory
+        let excluded = Set([recordingBaseURL].compactMap { $0 })
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            let entries = RecordingHistoryCatalog.list(recordedURLs: known, directory: directory)
+            let catalog = RecordingHistoryCatalog.list(recordedURLs: known, directory: directory)
+            let result = RecordingHistoryCatalog.retainRecent(catalog, excluding: excluded)
+            let entries = result.recordings
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 self.recordingHistoryRefreshInProgress = false
+                let removed = Set(result.removed.map { $0.standardizedFileURL.path })
+                // Filter the current defaults, rather than overwriting paths
+                // remembered while this background cleanup was running.
+                if !removed.isEmpty {
+                    let paths = UserDefaults.standard.stringArray(forKey: "recordingHistoryPaths") ?? []
+                    UserDefaults.standard.set(paths.filter { !removed.contains(URL(fileURLWithPath: $0).standardizedFileURL.path) },
+                                              forKey: "recordingHistoryPaths")
+                    if let last = self.lastRecordingURL, removed.contains(last.standardizedFileURL.path) {
+                        self.lastRecordingURL = nil
+                    }
+                }
+                self.recordingRetentionError = result.failures.isEmpty ? nil
+                    : "有 \(result.failures.count) 段过期录屏未能移到废纸篓，请检查文件权限后刷新。"
                 if self.recordingHistoryGeneration == generation, self.recordingHistory != entries {
                     self.recordingHistory = entries
                 }

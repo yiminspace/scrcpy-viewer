@@ -16,29 +16,66 @@ public struct SavedRecording: Identifiable, Equatable, Sendable {
 }
 
 public enum RecordingHistoryCatalog {
+    public static let retentionInterval: TimeInterval = 14 * 24 * 60 * 60
+
+    public struct RetentionResult {
+        public let recordings: [SavedRecording]
+        public let removed: [URL]
+        public let failures: [URL]
+    }
+
+    /// Moves expired, finalized recordings to Trash. Failed removals stay visible
+    /// so a permissions or volume error cannot silently hide a file still on disk.
+    public static func retainRecent(_ recordings: [SavedRecording], now: Date = Date(),
+                                    excluding: Set<URL> = [],
+                                    trash: (URL) throws -> Void = { url in
+                                        try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+                                    }) -> RetentionResult {
+        let cutoff = now.addingTimeInterval(-retentionInterval)
+        let excluded = Set(excluding.map { $0.standardizedFileURL })
+        var retained: [SavedRecording] = []
+        var removed: [URL] = []
+        var failures: [URL] = []
+        for recording in recordings {
+            guard recording.recordedAt < cutoff, !excluded.contains(recording.url) else {
+                retained.append(recording)
+                continue
+            }
+            // Recheck file metadata: a destination may have been replaced since
+            // the catalog scan, or changed into a symlink by another process.
+            guard let checked = read(recording.url) else {
+                if FileManager.default.fileExists(atPath: recording.url.path) {
+                    retained.append(recording)
+                    failures.append(recording.url)
+                } else {
+                    removed.append(recording.url)
+                }
+                continue
+            }
+            guard checked == recording else {
+                retained.append(checked)
+                continue
+            }
+            do {
+                try trash(recording.url)
+                removed.append(recording.url)
+            } catch {
+                retained.append(recording)
+                failures.append(recording.url)
+            }
+        }
+        return RetentionResult(recordings: retained, removed: removed, failures: failures)
+    }
+
     /// Reads only the app's selected recording directory and files it previously saved elsewhere.
     public static func list(recordedURLs: [URL], directory: URL) -> [SavedRecording] {
-        let keys: Set<URLResourceKey> = [.isRegularFileKey, .isSymbolicLinkKey, .isHiddenKey,
-                                       .creationDateKey, .contentModificationDateKey, .fileSizeKey]
         let localFiles = directory.isFileURL
             ? (try? FileManager.default.contentsOfDirectory(at: directory,
                 includingPropertiesForKeys: Array(keys), options: [.skipsHiddenFiles])) ?? []
             : []
         var recordings: [String: SavedRecording] = [:]
         for candidate in recordedURLs + localFiles {
-            guard candidate.isFileURL else { continue }
-            let url = candidate.standardizedFileURL
-            let filename = url.lastPathComponent.lowercased()
-            guard url.pathExtension.lowercased() == "mp4", !filename.hasPrefix("."),
-                  !filename.hasSuffix(".partial.mp4"), !filename.hasSuffix(".tmp.mp4"),
-                  !filename.hasSuffix(".temp.mp4"),
-                  let values = try? url.resourceValues(forKeys: keys),
-                  values.isRegularFile == true, values.isSymbolicLink != true,
-                  values.isHidden != true else { continue }
-            // Replacing an existing destination may retain its original creation date.
-            let recordedAt = [values.creationDate, values.contentModificationDate].compactMap { $0 }.max() ?? .distantPast
-            let recording = SavedRecording(url: url, recordedAt: recordedAt,
-                fileSize: Int64(max(0, values.fileSize ?? 0)))
+            guard let recording = read(candidate) else { continue }
             recordings[recording.id] = recording
         }
         return recordings.values.sorted {
@@ -48,6 +85,28 @@ public enum RecordingHistoryCatalog {
             }
             return $0.id < $1.id
         }
+    }
+
+    private static let keys: Set<URLResourceKey> = [
+        .isRegularFileKey, .isSymbolicLinkKey, .isHiddenKey,
+        .creationDateKey, .contentModificationDateKey, .fileSizeKey
+    ]
+
+    private static func read(_ candidate: URL) -> SavedRecording? {
+        guard candidate.isFileURL else { return nil }
+        // Use a fresh URL so cached resource values cannot bypass the recheck.
+        let url = URL(fileURLWithPath: candidate.standardizedFileURL.path)
+        let filename = url.lastPathComponent.lowercased()
+        guard url.pathExtension.lowercased() == "mp4", !filename.hasPrefix("."),
+              !filename.hasSuffix(".partial.mp4"), !filename.hasSuffix(".tmp.mp4"),
+              !filename.hasSuffix(".temp.mp4"),
+              let values = try? url.resourceValues(forKeys: keys),
+              values.isRegularFile == true, values.isSymbolicLink != true,
+              values.isHidden != true else { return nil }
+        // Replacing an existing destination may retain its original creation date.
+        let recordedAt = [values.creationDate, values.contentModificationDate].compactMap { $0 }.max() ?? .distantPast
+        return SavedRecording(url: url, recordedAt: recordedAt,
+                              fileSize: Int64(max(0, values.fileSize ?? 0)))
     }
 }
 
@@ -83,7 +142,7 @@ public enum RecordingPreviewLoader {
         let duration = seconds.isFinite && seconds > 0 ? seconds : 0
         let generator = AVAssetImageGenerator(asset: asset)
         generator.appliesPreferredTrackTransform = true
-        generator.maximumSize = CGSize(width: 320, height: 180)
+        generator.maximumSize = CGSize(width: 104, height: 80)
         let requestedTime = CMTime(seconds: min(1, duration / 3), preferredTimescale: 600)
         let generated = try await withTaskCancellationHandler {
             try Task.checkCancellation()
@@ -118,6 +177,13 @@ public actor RecordingPreviewCache {
                 loader: @escaping (URL) async throws -> RecordingPreview = RecordingPreviewLoader.load) {
         self.capacity = max(1, capacity)
         self.loader = loader
+    }
+
+    public func cached(_ recording: SavedRecording) -> RecordingPreview? {
+        let key = Key(path: recording.id, date: recording.recordedAt, size: recording.fileSize)
+        guard let preview = previews[key] else { return nil }
+        touch(key)
+        return preview
     }
 
     public func load(_ recording: SavedRecording) async throws -> RecordingPreview {

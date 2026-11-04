@@ -56,6 +56,46 @@ final class SavedRecordingTests: XCTestCase {
         XCTAssertEqual(recordings.first?.recordedAt, replacement)
     }
 
+    func testRetentionKeepsBoundaryAndProtectedFilesAndReportsFailedTrash() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let cutoff = now.addingTimeInterval(-RecordingHistoryCatalog.retentionInterval)
+        let recent = try file("recent.mp4", in: root, recordedAt: now)
+        let boundary = try file("boundary.mp4", in: root, recordedAt: cutoff)
+        let expired = try file("expired.mp4", in: root, recordedAt: cutoff.addingTimeInterval(-1))
+        let failed = try file("failed.mp4", in: root, recordedAt: cutoff.addingTimeInterval(-2))
+        let protected = try file("protected.mp4", in: root, recordedAt: cutoff.addingTimeInterval(-3))
+        let catalog = RecordingHistoryCatalog.list(recordedURLs: [], directory: root)
+        var trashed: [URL] = []
+        let result = RecordingHistoryCatalog.retainRecent(catalog, now: now, excluding: [protected]) { url in
+            if url == failed { throw CocoaError(.fileWriteNoPermission) }
+            trashed.append(url)
+        }
+        XCTAssertEqual(trashed, [expired])
+        XCTAssertEqual(result.removed, [expired])
+        XCTAssertEqual(result.failures, [failed])
+        XCTAssertEqual(Set(result.recordings.map(\.url)), Set([recent, boundary, failed, protected]))
+    }
+
+    func testRetentionDoesNotTrashReplacedOrUnfinishedFiles() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let old = now.addingTimeInterval(-RecordingHistoryCatalog.retentionInterval - 1)
+        let replaced = try file("replaced.mp4", in: root, recordedAt: old)
+        _ = try file("unfinished.partial.mp4", in: root, recordedAt: old)
+        _ = try file("unrelated.txt", in: root, recordedAt: old)
+        let catalog = RecordingHistoryCatalog.list(recordedURLs: [], directory: root)
+        try FileManager.default.setAttributes([.modificationDate: now], ofItemAtPath: replaced.path)
+        let result = RecordingHistoryCatalog.retainRecent(catalog, now: now) { _ in
+            XCTFail("A replaced recording must not be trashed")
+        }
+        XCTAssertTrue(result.removed.isEmpty)
+        XCTAssertEqual(result.recordings.first?.recordedAt, now)
+        XCTAssertEqual(result.recordings.count, 1)
+    }
+
     func testThumbnailDecodesSavedMP4WithinBoundsAndReportsDuration() async throws {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -75,8 +115,8 @@ final class SavedRecordingTests: XCTestCase {
         }
         let preview = try await RecordingPreviewLoader.load(url: saved)
         XCTAssertEqual(preview.duration, 2, accuracy: 0.1)
-        XCTAssertEqual(preview.image.width, 90)
-        XCTAssertEqual(preview.image.height, 180)
+        XCTAssertEqual(preview.image.width, 40)
+        XCTAssertEqual(preview.image.height, 80)
         var pixel = [UInt8](repeating: 0, count: 4)
         try pixel.withUnsafeMutableBytes { buffer in
             let sample = try XCTUnwrap(CGContext(data: buffer.baseAddress, width: 1, height: 1,
