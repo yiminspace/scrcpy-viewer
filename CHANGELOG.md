@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.10.3 (2026-11-04)
+
+### Bug Fixes
+
+- 限制录屏保留两周并优化历史滚动 ([#13](https://github.com/yiminspace/scrcpy-viewer/pull/13),
+  [`458b027`](https://github.com/yiminspace/scrcpy-viewer/commit/458b027369a38cdccee45f204936f7919f145be6))
+
+
 ## v0.10.2 (2026-10-30)
 
 ### Bug Fixes
