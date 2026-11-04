@@ -4,6 +4,7 @@ import ViewerCore
 
 struct RecordingHistoryView: View, Equatable {
     let recordings: [SavedRecording]
+    let retentionError: String?
     let refresh: () -> Void
     let select: (SavedRecording) -> Void
     let trash: (SavedRecording) -> Void
@@ -13,7 +14,7 @@ struct RecordingHistoryView: View, Equatable {
     // Live screen frames invalidate the parent many times per second. History
     // actions belong to the same window; only catalog changes affect this view.
     static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.recordings == rhs.recordings
+        lhs.recordings == rhs.recordings && lhs.retentionError == rhs.retentionError
     }
 
     private var recordingDays: [(date: Date, recordings: [SavedRecording])] {
@@ -45,6 +46,13 @@ struct RecordingHistoryView: View, Equatable {
             .foregroundStyle(.secondary)
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
+            Text("仅保留最近 14 天，过期移到废纸篓")
+                .font(.system(size: 10)).foregroundStyle(.tertiary)
+                .padding(.horizontal, 8)
+            if let retentionError {
+                Text(retentionError).font(.caption2).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true).padding(.horizontal, 8)
+            }
             if expanded {
                 if recordings.isEmpty {
                     Text("录屏保存后会出现在这里，点击使用系统播放器播放。")
@@ -52,25 +60,27 @@ struct RecordingHistoryView: View, Equatable {
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.horizontal, 8).padding(.bottom, 8)
                 } else {
-                    LazyVStack(alignment: .leading, spacing: 3) {
-                        ForEach(recordingDays, id: \.date) { day in
-                            Section {
-                                ForEach(day.recordings) { recording in
-                                    SavedRecordingRow(recording: recording,
-                                                      select: { select(recording) },
-                                                      trash: { recordingToTrash = recording })
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 3) {
+                            ForEach(recordingDays, id: \.date) { day in
+                                Section {
+                                    ForEach(day.recordings) { recording in
+                                        SavedRecordingRow(recording: recording,
+                                                          select: { select(recording) },
+                                                          trash: { recordingToTrash = recording })
+                                    }
+                                } header: {
+                                    HStack(spacing: 8) {
+                                        Text(day.date, format: .dateTime.year().month(.twoDigits).day(.twoDigits))
+                                            .font(.system(size: 11, weight: .medium))
+                                            .foregroundStyle(.secondary)
+                                            .accessibilityAddTraits(.isHeader)
+                                        Divider()
+                                    }
+                                    .padding(.horizontal, 8)
+                                    .padding(.top, 9)
+                                    .padding(.bottom, 3)
                                 }
-                            } header: {
-                                HStack(spacing: 8) {
-                                    Text(day.date, format: .dateTime.year().month(.twoDigits).day(.twoDigits))
-                                        .font(.system(size: 11, weight: .medium))
-                                        .foregroundStyle(.secondary)
-                                        .accessibilityAddTraits(.isHeader)
-                                    Divider()
-                                }
-                                .padding(.horizontal, 8)
-                                .padding(.top, 9)
-                                .padding(.bottom, 3)
                             }
                         }
                     }
@@ -171,7 +181,16 @@ private struct SavedRecordingRow: View {
             preview = nil
             previewUnavailable = false
             do {
-                let loaded = try await RecordingPreviewCache.shared.load(recording)
+                // Reappearing rows reuse memory immediately. New rows must
+                // remain onscreen briefly before opening a video decoder.
+                let loaded: RecordingPreview
+                if let cached = await RecordingPreviewCache.shared.cached(recording) {
+                    loaded = cached
+                } else {
+                    try await Task.sleep(for: .milliseconds(150))
+                    try Task.checkCancellation()
+                    loaded = try await RecordingPreviewCache.shared.load(recording)
+                }
                 try Task.checkCancellation()
                 preview = loaded
             } catch is CancellationError {

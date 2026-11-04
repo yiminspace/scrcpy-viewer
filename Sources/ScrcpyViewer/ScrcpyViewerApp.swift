@@ -172,16 +172,19 @@ private struct ViewerWindow: View {
                             .font(.callout).foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading).padding(8)
                     }
-                    Divider().padding(.top, 10).padding(.bottom, 5)
-                    RecordingHistoryView(recordings: model.recordingHistory,
-                                         refresh: model.refreshRecordingHistory,
-                                         select: playRecording,
-                                         trash: trashRecording)
-                        .equatable()
                 }
                 .padding(.horizontal, 8)
             }
-            Spacer(minLength: 0)
+            .frame(height: min(260, CGFloat(max(1, model.currentScreens.count)) * 90))
+            Divider().padding(.horizontal, 8).padding(.vertical, 5)
+            RecordingHistoryView(recordings: model.recordingHistory,
+                                 retentionError: model.recordingRetentionError,
+                                 refresh: model.refreshRecordingHistory,
+                                 select: playRecording,
+                                 trash: trashRecording)
+                .equatable()
+                .padding(.horizontal, 8)
+                .frame(maxHeight: .infinity, alignment: .top)
             VStack(alignment: .leading, spacing: 5) {
                 Label("主屏可操作", systemImage: "cursorarrow").font(.caption).foregroundStyle(.secondary)
                 Text("副屏仅观看，出现后自动加入。")
