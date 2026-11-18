@@ -36,6 +36,8 @@ cat > "$app_dir/Contents/Info.plist" <<PLIST
 <key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
 <key>NSHumanReadableCopyright</key><string>Copyright © 2026 yiminspace. MIT License.</string>
 <key>NSHighResolutionCapable</key><true/>
+<key>NSLocalNetworkUsageDescription</key><string>Scrcpy Viewer uses your local network to reconnect to your paired Android device.</string>
+<key>NSBonjourServices</key><array><string>_adb-tls-connect._tcp</string></array>
 <key>NSPrincipalClass</key><string>NSApplication</string>
 </dict></plist>
 PLIST

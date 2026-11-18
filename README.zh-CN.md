@@ -89,6 +89,8 @@ bash scripts/setup-dependencies.sh
 
 本项目采用 [MIT](LICENSE) 协议，是独立项目，非 Genymobile 官方项目。scrcpy 服务端使用 Apache-2.0；仓库和应用下载包均不内置其二进制。详见 [第三方声明](THIRD_PARTY_NOTICES.md)。
 
+如果 macOS 能发现已记住手机的无线调试服务，但共享 ADB 仍离线，应用可以启动仅监听本机的无线 ADB。此功能需要 Android SDK Platform-Tools 37 或更新版本。连接提示中的「修复无线连接」可手动重试。USB 继续使用共享 ADB。请在 macOS 的 **System Settings → Privacy & Security → Local Network** 中允许 **Scrcpy Viewer** 发现手机。
+
 ### 可选的 root 开机辅助
 
 部分系统会在重启时关闭原生无线调试。可手动将 [android-wireless-debugging-boot.sh](scripts/android-wireless-debugging-boot.sh) 安装到 root 管理器的 `service.d` 目录并设为仅 root 可执行。脚本等待系统启动完成和 Wi-Fi 获得地址，启用系统无线调试，并在后台监听系统因断网关闭无线调试的事件；Wi-Fi 在约三分钟内重新获得 IPv4 地址时，尝试恢复一次。继续使用原生 adbd TLS 和 mDNS，不替换系统程序，不持续强制开关状态。正常联网时手动关闭不会触发恢复；断网恢复等待期间无法区分额外的手动关闭意图，此时可能重新开启。移除脚本后重启可停止此辅助。它不代替首次授权或可信网络确认。此辅助需要 root；普通设备仍由用户在系统设置中开启无线调试。

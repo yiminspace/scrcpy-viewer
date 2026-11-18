@@ -368,7 +368,9 @@ private struct ViewerWindow: View {
                 .font(.title3.weight(.medium))
             Text(emptyHint).font(.callout).foregroundStyle(.secondary)
                 .multilineTextAlignment(.center).frame(maxWidth: 390)
-            Button(model.hasWirelessSelection && model.wirelessReconnectStatus != .automatic ? "继续重连" : "重新检查", action: model.refresh)
+            if !model.canRepairWireless {
+                Button(model.hasWirelessSelection && model.wirelessReconnectStatus != .automatic ? "继续重连" : "重新检查", action: model.refresh)
+            }
             if model.dependencyError != nil {
                 Link("安装说明", destination: URL(string: "https://github.com/yiminspace/scrcpy-viewer/blob/main/docs/install.md")!)
             }
@@ -378,6 +380,7 @@ private struct ViewerWindow: View {
 
     private var emptyHint: String {
         if model.dependencyError != nil { return "请安装 adb 和兼容的 scrcpy 服务端，再点击重新检查。下载包内附有依赖安装脚本，详情见安装说明。" }
+        if model.canRepairWireless { return "手机的无线调试已可发现。正在等待 ADB 建立连接。" }
         if model.selectedDevice?.connectionState == "unauthorized" { return "请在手机上允许这台 Mac 进行 adb 调试。授权后屏幕会自动出现。" }
         if !model.isConnected, let serial = model.selectedSerial, WirelessReconnectPolicy.isNetworkSerial(serial) {
             if model.wirelessReconnectStatus != .automatic {
@@ -396,7 +399,11 @@ private struct ViewerWindow: View {
         HStack(alignment: .top, spacing: 8) {
             Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange)
             Text(error).font(.callout).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
-            Button("重试", action: model.refresh)
+            if model.canRepairWireless {
+                Button("修复无线连接", action: model.repairWirelessConnection)
+            } else {
+                Button("重试", action: model.refresh)
+            }
         }.padding(12).background(Color.orange.opacity(0.07))
     }
 

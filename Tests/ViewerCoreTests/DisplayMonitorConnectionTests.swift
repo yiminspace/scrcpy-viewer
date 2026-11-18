@@ -102,4 +102,97 @@ final class DisplayMonitorConnectionTests: XCTestCase {
         let reused = try snapshots.wait(after: revision) { $0.devices.contains { $0.connectionState == "identity-mismatch" } }
         XCTAssertTrue(reused.displays.isEmpty)
     }
+
+    func testWirelessRepairRejectsWrongDeviceAndRecoversChangedPort() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        func write(_ text: String, _ file: String) throws {
+            try text.write(to: root.appendingPathComponent(file), atomically: true, encoding: .utf8)
+        }
+        let adb = root.appendingPathComponent("adb")
+        try write(#"""
+        #!/bin/sh
+        root="$(dirname "$0")"
+        case "$*" in
+          'version') echo 'Version 37.0.1-example'; exit ;;
+          '-L tcp:localhost:'*' server nodaemon')
+            [ "$ADB_USB/$ADB_EMU/$ADB_MDNS/$ADB_MDNS_AUTO_CONNECT" = 0/0/0/0 ] || exit 1
+            echo "$$" >> "$root/owned-pids"
+            rm -f "$root/connected" "$root/block-connect"
+            exec /bin/sleep 120 ;;
+          'devices -l') echo 'List of devices attached'; exit ;;
+        esac
+        case "$2" in tcp:127.0.0.1:*) shift 2 ;; *) exit 1 ;; esac
+        case "$*" in
+          'devices -l')
+            echo 'List of devices attached'
+            endpoint="$(cat "$root/endpoint")"
+            if [ "$(cat "$root/connected" 2>/dev/null)" = "$endpoint" ]; then
+              echo "$endpoint device model:Example_Phone transport_id:1"
+            fi ;;
+          'connect '*) [ ! -f "$root/block-connect" ] && printf '%s\n' "$2" > "$root/connected" ;;
+          *'shell getprop ro.serialno') cat "$root/hardware" ;;
+          *'shell getprop persist.adb.wifi.guid') echo '' ;;
+          *'shell dumpsys display') cat "$root/display" ;;
+          *) exit 1 ;;
+        esac
+        """#, "adb")
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: adb.path)
+        try write("""
+        DisplayDeviceInfo{"Built-in Screen", uniqueId="local:fixture", 1080 x 2400, state ON}
+        mBaseDisplayInfo=DisplayInfo{"Built-in Screen", displayId 0, real 1080 x 2400, state ON, uniqueId "local:fixture"}
+        """, "display")
+        let first = "192.0.2.1:40000"
+        let second = "192.0.2.1:40001"
+        try write(first, "endpoint")
+        try write("wrong-phone", "hardware")
+
+        let suite = "WirelessRepairFixture-" + UUID().uuidString
+        let preferences = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { preferences.removePersistentDomain(forName: suite) }
+        let identity = try XCTUnwrap(WirelessDeviceIdentity(serialNumber: "phone-one"))
+        preferences.set(try JSONEncoder().encode([first: identity]), forKey: "wirelessDeviceIdentities.v1")
+        let snapshots = Snapshots()
+        let monitor = DisplayMonitor(dependencies: ViewerDependencies(adbURL: adb, serverURL: root, serverVersion: "3.3.3"),
+            preferences: preferences, makeBrowser: { queue, onChange in
+                queue.async { onChange([.init(name: "adb-phone-one-000000", interfaceIndex: 0)]) }
+                return NSObject()
+            }, resolveBonjourService: { service in
+                guard let endpoint = try? String(contentsOf: root.appendingPathComponent("endpoint"), encoding: .utf8) else { return [] }
+                return WirelessService.parse("\(service.name)\t_adb-tls-connect._tcp\t\(endpoint)")
+            }, onUpdate: snapshots.append)
+        defer {
+            monitor.stop()
+            let stopped = expectation(description: "owned ADB stopped")
+            monitor.finishShutdown { stopped.fulfill() }
+            wait(for: [stopped], timeout: 5)
+        }
+        monitor.selectDevice(first)
+        monitor.start()
+        let rejected = try snapshots.wait(after: 0) {
+            $0.devices.contains { $0.connectionState == "identity-mismatch" }
+        }
+        XCTAssertTrue(rejected.displays.isEmpty)
+
+        // A changed advertisement must be authenticated before the saved address changes.
+        try write("phone-one", "hardware")
+        try write(second, "endpoint")
+        let recovered = try snapshots.wait(after: 0) { $0.selectedSerial == second && !$0.displays.isEmpty }
+        XCTAssertEqual(recovered.replacingSerial, first)
+        XCTAssertNotNil(recovered.wirelessADBPort)
+        XCTAssertFalse(recovered.canRepairWireless)
+
+        let revision = snapshots.count
+        let third = "192.0.2.1:40002"
+        try write("", "block-connect")
+        try write(third, "endpoint")
+        _ = try snapshots.wait(after: revision) { $0.canRepairWireless && $0.displays.isEmpty }
+        monitor.repairWirelessConnection()
+        let repaired = try snapshots.wait(after: revision) { $0.selectedSerial == third && !$0.displays.isEmpty }
+        XCTAssertNotNil(repaired.wirelessADBPort)
+        let ownedPIDs = try String(contentsOf: root.appendingPathComponent("owned-pids"), encoding: .utf8)
+        XCTAssertEqual(Set(ownedPIDs.split(whereSeparator: \.isNewline)).count, 2)
+    }
+
 }

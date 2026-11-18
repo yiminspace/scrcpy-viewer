@@ -199,7 +199,7 @@ public final class ScrcpyStream {
     @discardableResult
     private func adb(_ arguments: [String], timeout: TimeInterval = 10) throws -> String {
         let result = try CommandRunner.run(executable: dependencies.adbURL,
-                                          arguments: ["-s", serial] + arguments, timeout: timeout)
+                                          arguments: dependencies.adbArguments(["-s", serial] + arguments), timeout: timeout)
         guard result.status == 0 else {
             throw ScrcpyProtocolError.malformed("adb 操作失败：\(result.output.trimmingCharacters(in: .whitespacesAndNewlines).prefix(600))")
         }
@@ -218,7 +218,7 @@ public final class ScrcpyStream {
             "com.genymobile.scrcpy.Server 3.3.3 scid=\(scid) tunnel_forward=true " +
             "video=true audio=false control=\(ScrcpyControlProtocol.allowsControl(displayID: displayID)) video_codec=h264 display_id=\(displayID) " +
             "\(videoOptions) power_on=false clipboard_autosync=false cleanup=true"
-        child.arguments = ["-s", serial, "shell", command]
+        child.arguments = dependencies.adbArguments(["-s", serial, "shell", command])
         child.standardOutput = output; child.standardError = output
         child.standardInput = FileHandle.nullDevice
         output.fileHandleForReading.readabilityHandler = { [weak self] handle in
