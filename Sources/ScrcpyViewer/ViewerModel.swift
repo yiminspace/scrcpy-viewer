@@ -54,6 +54,7 @@ final class ViewerModel: ObservableObject {
     @Published var selectedScreenID: String?
     @Published var followNewScreen = true
     @Published private(set) var discoveryError: String?
+    @Published private(set) var canRepairWireless = false
     @Published private(set) var wirelessReconnectStatus: WirelessReconnectStatus = .automatic
     @Published private(set) var dependencyError: String?
     @Published private(set) var dependencies: ViewerDependencies?
@@ -107,6 +108,7 @@ final class ViewerModel: ObservableObject {
     private var recordingHistoryRefreshInProgress = false
     private var recordingHistoryRefreshRequested = false
 
+    private var wirelessADBPort: UInt16?
     private var monitor: DisplayMonitor?
     private var streams: [String: ScrcpyStream] = [:]
     private var retiringStreams: [UUID: ScrcpyStream] = [:]
@@ -120,6 +122,7 @@ final class ViewerModel: ObservableObject {
     private var isResolvingDependencies = false
     private var started = false
     private var isShuttingDown = false
+    private var finishingMonitorShutdown = false
     private var shutdownCompletions: [() -> Void] = []
     let diagnostics = ViewerDiagnostics()
 
@@ -196,7 +199,6 @@ final class ViewerModel: ObservableObject {
         stopRecording(suppressAutomaticRestart: false)
         monitorGeneration = UUID()
         monitor?.stop()
-        monitor = nil
         stopAllStreams()
         diagnostics.write(model: self, force: true)
         diagnostics.stop()
@@ -217,6 +219,11 @@ final class ViewerModel: ObservableObject {
             }
             monitor?.refresh()
         }
+    }
+
+    func repairWirelessConnection() {
+        guard !isShuttingDown, canRepairWireless else { return }
+        monitor?.repairWirelessConnection()
     }
 
     var hasWirelessSelection: Bool {
@@ -341,10 +348,11 @@ final class ViewerModel: ObservableObject {
     func wakeMainDisplay() {
         guard !isShuttingDown, !isWakingMain, isConnected, let serial = selectedSerial, let dependencies else { return }
         isWakingMain = true
+        let route = dependencies.routingWirelessADB(to: wirelessADBPort)
         interactionError = nil
         diagnostics.recordLifecycle("explicit_wake_requested")
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let result = Result { try DeviceActions.wakeMainDisplay(dependencies: dependencies, serial: serial) }
+            let result = Result { try DeviceActions.wakeMainDisplay(dependencies: route, serial: serial) }
             guard let viewer = self else { return }
             DispatchQueue.main.async {
                 viewer.isWakingMain = false
@@ -816,6 +824,15 @@ final class ViewerModel: ObservableObject {
                 }
             } else { switchDevice(snapshot.selectedSerial) }
         }
+        if wirelessADBPort != snapshot.wirelessADBPort {
+            wirelessADBPort = snapshot.wirelessADBPort
+            stopAllStreams()
+            for index in screens.indices {
+                screens[index].presence = .disconnected
+                screens[index].isSwitchingConnection = true
+            }
+        }
+        canRepairWireless = snapshot.canRepairWireless
         wirelessReconnectStatus = snapshot.reconnectStatus
         discoveryError = snapshot.error
         guard isConnected else {
@@ -892,7 +909,8 @@ final class ViewerModel: ObservableObject {
         screens[index].receivedCurrentFrame = false
         let mailbox = FrameMailbox()
         let stream = ScrcpyStream(
-            dependencies: dependencies, serial: display.serial, displayID: display.displayID,
+            dependencies: dependencies.routingWirelessADB(to: wirelessADBPort),
+            serial: display.serial, displayID: display.displayID,
             onFrame: { [weak self] frame in
                 guard mailbox.offer(frame) else { return }
                 DispatchQueue.main.async {
@@ -983,6 +1001,17 @@ final class ViewerModel: ObservableObject {
     private func completeShutdownIfReady() {
         guard isShuttingDown, streams.isEmpty, retiringStreams.isEmpty,
               !isRecording, !isFinishingRecording, !isSavingScreenshot else { return }
+        if let monitor {
+            guard !finishingMonitorShutdown else { return }
+            finishingMonitorShutdown = true
+            monitor.finishShutdown { [weak self] in
+                DispatchQueue.main.async {
+                    self?.monitor = nil
+                    self?.completeShutdownIfReady()
+                }
+            }
+            return
+        }
         let completions = shutdownCompletions
         shutdownCompletions.removeAll()
         guard !completions.isEmpty else { return }

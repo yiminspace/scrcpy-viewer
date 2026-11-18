@@ -53,11 +53,15 @@ public struct DiscoverySnapshot: Sendable {
     public let replacingSerial: String?
     public let reconnectStatus: WirelessReconnectStatus
     public let transportAvailable: Bool
-    public init(devices: [AndroidDevice], displays: [AndroidDisplay], selectedSerial: String?, error: String? = nil, replacingSerial: String? = nil, reconnectStatus: WirelessReconnectStatus = .automatic, transportAvailable: Bool = true) {
+    public let wirelessADBPort: UInt16?
+    public let canRepairWireless: Bool
+    public init(devices: [AndroidDevice], displays: [AndroidDisplay], selectedSerial: String?, error: String? = nil, replacingSerial: String? = nil, reconnectStatus: WirelessReconnectStatus = .automatic, transportAvailable: Bool = true, wirelessADBPort: UInt16? = nil, canRepairWireless: Bool = false) {
         self.devices = devices; self.displays = displays; self.selectedSerial = selectedSerial; self.error = error
         self.replacingSerial = replacingSerial
         self.reconnectStatus = reconnectStatus
         self.transportAvailable = transportAvailable
+        self.wirelessADBPort = wirelessADBPort
+        self.canRepairWireless = canRepairWireless
     }
 }
 
@@ -67,8 +71,19 @@ public struct ViewerDependencies: Sendable {
     public let scrcpyURL: URL?
     public let serverURL: URL
     public let serverVersion: String
-    public init(adbURL: URL, scrcpyURL: URL? = nil, serverURL: URL, serverVersion: String) {
+    public let wirelessADBPort: UInt16?
+    public init(adbURL: URL, scrcpyURL: URL? = nil, serverURL: URL, serverVersion: String, wirelessADBPort: UInt16? = nil) {
         self.adbURL = adbURL; self.scrcpyURL = scrcpyURL; self.serverURL = serverURL; self.serverVersion = serverVersion
+        self.wirelessADBPort = wirelessADBPort
+    }
+
+    public func routingWirelessADB(to port: UInt16?) -> Self {
+        Self(adbURL: adbURL, scrcpyURL: scrcpyURL, serverURL: serverURL, serverVersion: serverVersion, wirelessADBPort: port)
+    }
+
+    func adbArguments(_ arguments: [String]) -> [String] {
+        guard let wirelessADBPort else { return arguments }
+        return ["-L", "tcp:127.0.0.1:\(wirelessADBPort)"] + arguments
     }
 }
 

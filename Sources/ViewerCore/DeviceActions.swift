@@ -8,7 +8,7 @@ public enum DeviceActions {
             throw ScrcpyProtocolError.malformed("未选择设备")
         }
         let result = try CommandRunner.run(executable: dependencies.adbURL,
-            arguments: ["-s", serial, "shell", "input", "keyevent", "224"], timeout: 10)
+            arguments: dependencies.adbArguments(["-s", serial, "shell", "input", "keyevent", "224"]), timeout: 10)
         guard result.status == 0 else {
             throw ScrcpyProtocolError.malformed("唤醒主屏失败：\(result.output.trimmingCharacters(in: .whitespacesAndNewlines).prefix(400))")
         }
