@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.10.4 (2026-11-18)
+
+### Bug Fixes
+
+- 自动恢复无线 ADB 连接 ([#14](https://github.com/yiminspace/scrcpy-viewer/pull/14),
+  [`794a602`](https://github.com/yiminspace/scrcpy-viewer/commit/794a602a24ab274c6671955f449f5ee32b35642e))
+
+
 ## v0.10.3 (2026-11-04)
 
 ### Bug Fixes
